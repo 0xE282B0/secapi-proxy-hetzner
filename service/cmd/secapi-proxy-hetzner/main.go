@@ -28,7 +28,7 @@ func main() {
 	defer store.Close()
 
 	regionService := hetzner.NewRegionService(cfg)
-	srv := httpserver.New(cfg, store, regionService, regionService)
+	srv := httpserver.New(cfg, store, regionService, regionService, regionService)
 
 	go func() {
 		log.Printf("starting secapi-proxy-hetzner on %s", cfg.ListenAddr)

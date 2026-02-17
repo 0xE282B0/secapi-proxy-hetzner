@@ -71,3 +71,39 @@ func (q *Queries) GetOperationByID(ctx context.Context, operationID string) (Ope
 	)
 	return i, err
 }
+
+const listOperationsBySecaRef = `-- name: ListOperationsBySecaRef :many
+SELECT id, operation_id, seca_ref, provider_action_id, phase, error_text, created_at, updated_at
+FROM operations
+WHERE seca_ref = $1
+ORDER BY created_at DESC
+`
+
+func (q *Queries) ListOperationsBySecaRef(ctx context.Context, secaRef string) ([]Operation, error) {
+	rows, err := q.db.Query(ctx, listOperationsBySecaRef, secaRef)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Operation{}
+	for rows.Next() {
+		var i Operation
+		if err := rows.Scan(
+			&i.ID,
+			&i.OperationID,
+			&i.SecaRef,
+			&i.ProviderActionID,
+			&i.Phase,
+			&i.ErrorText,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

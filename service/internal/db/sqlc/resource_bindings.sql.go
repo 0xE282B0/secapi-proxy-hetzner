@@ -51,6 +51,16 @@ func (q *Queries) CreateResourceBinding(ctx context.Context, arg CreateResourceB
 	return i, err
 }
 
+const deleteResourceBindingBySecaRef = `-- name: DeleteResourceBindingBySecaRef :exec
+DELETE FROM resource_bindings
+WHERE seca_ref = $1
+`
+
+func (q *Queries) DeleteResourceBindingBySecaRef(ctx context.Context, secaRef string) error {
+	_, err := q.db.Exec(ctx, deleteResourceBindingBySecaRef, secaRef)
+	return err
+}
+
 const getResourceBindingBySecaRef = `-- name: GetResourceBindingBySecaRef :one
 SELECT id, tenant, workspace, kind, seca_ref, provider_ref, status, created_at, updated_at
 FROM resource_bindings
@@ -59,6 +69,98 @@ WHERE seca_ref = $1
 
 func (q *Queries) GetResourceBindingBySecaRef(ctx context.Context, secaRef string) (ResourceBinding, error) {
 	row := q.db.QueryRow(ctx, getResourceBindingBySecaRef, secaRef)
+	var i ResourceBinding
+	err := row.Scan(
+		&i.ID,
+		&i.Tenant,
+		&i.Workspace,
+		&i.Kind,
+		&i.SecaRef,
+		&i.ProviderRef,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const listResourceBindingsByScopeAndKind = `-- name: ListResourceBindingsByScopeAndKind :many
+SELECT id, tenant, workspace, kind, seca_ref, provider_ref, status, created_at, updated_at
+FROM resource_bindings
+WHERE tenant = $1
+  AND workspace = $2
+  AND kind = $3
+ORDER BY seca_ref
+`
+
+type ListResourceBindingsByScopeAndKindParams struct {
+	Tenant    string `json:"tenant"`
+	Workspace string `json:"workspace"`
+	Kind      string `json:"kind"`
+}
+
+func (q *Queries) ListResourceBindingsByScopeAndKind(ctx context.Context, arg ListResourceBindingsByScopeAndKindParams) ([]ResourceBinding, error) {
+	rows, err := q.db.Query(ctx, listResourceBindingsByScopeAndKind, arg.Tenant, arg.Workspace, arg.Kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ResourceBinding{}
+	for rows.Next() {
+		var i ResourceBinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.Tenant,
+			&i.Workspace,
+			&i.Kind,
+			&i.SecaRef,
+			&i.ProviderRef,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const upsertResourceBinding = `-- name: UpsertResourceBinding :one
+INSERT INTO resource_bindings (
+  tenant, workspace, kind, seca_ref, provider_ref, status
+) VALUES (
+  $1, $2, $3, $4, $5, $6
+)
+ON CONFLICT (seca_ref) DO UPDATE
+SET
+  provider_ref = EXCLUDED.provider_ref,
+  status = EXCLUDED.status,
+  updated_at = NOW()
+RETURNING id, tenant, workspace, kind, seca_ref, provider_ref, status, created_at, updated_at
+`
+
+type UpsertResourceBindingParams struct {
+	Tenant      string `json:"tenant"`
+	Workspace   string `json:"workspace"`
+	Kind        string `json:"kind"`
+	SecaRef     string `json:"seca_ref"`
+	ProviderRef string `json:"provider_ref"`
+	Status      string `json:"status"`
+}
+
+func (q *Queries) UpsertResourceBinding(ctx context.Context, arg UpsertResourceBindingParams) (ResourceBinding, error) {
+	row := q.db.QueryRow(ctx, upsertResourceBinding,
+		arg.Tenant,
+		arg.Workspace,
+		arg.Kind,
+		arg.SecaRef,
+		arg.ProviderRef,
+		arg.Status,
+	)
 	var i ResourceBinding
 	err := row.Scan(
 		&i.ID,

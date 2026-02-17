@@ -31,6 +31,15 @@ Health endpoints:
 - `GET /compute/v1/tenants/{tenant}/skus/{name}`
 - `GET /storage/v1/tenants/{tenant}/images`
 - `GET /storage/v1/tenants/{tenant}/images/{name}`
+- `GET /compute/v1/tenants/{tenant}/workspaces/{workspace}/instances`
+- `GET|PUT|DELETE /compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}`
+- `POST /compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/start`
+- `POST /compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/stop`
+- `POST /compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/restart`
+- `GET /storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages`
+- `GET|PUT|DELETE /storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}`
+- `POST /storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/attach`
+- `POST /storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/detach`
 
 ## Hetzner token setup
 
@@ -101,4 +110,10 @@ Run full Phase 1 smoke test:
 
 ```bash
 make phase1-smoke
+```
+
+Run Phase 2 smoke checks:
+
+```bash
+make phase2-smoke
 ```

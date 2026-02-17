@@ -10,3 +10,9 @@ RETURNING *;
 SELECT *
 FROM operations
 WHERE operation_id = $1;
+
+-- name: ListOperationsBySecaRef :many
+SELECT *
+FROM operations
+WHERE seca_ref = $1
+ORDER BY created_at DESC;

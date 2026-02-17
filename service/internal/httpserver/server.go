@@ -26,6 +26,23 @@ type CatalogProvider interface {
 	GetCatalogImage(ctx context.Context, name string) (*hetzner.CatalogImage, error)
 }
 
+type ComputeStorageProvider interface {
+	ListInstances(ctx context.Context) ([]hetzner.Instance, error)
+	GetInstance(ctx context.Context, name string) (*hetzner.Instance, error)
+	CreateOrUpdateInstance(ctx context.Context, req hetzner.InstanceCreateRequest) (*hetzner.Instance, bool, string, error)
+	DeleteInstance(ctx context.Context, name string) (bool, string, error)
+	StartInstance(ctx context.Context, name string) (bool, string, error)
+	StopInstance(ctx context.Context, name string) (bool, string, error)
+	RestartInstance(ctx context.Context, name string) (bool, string, error)
+
+	ListBlockStorages(ctx context.Context) ([]hetzner.BlockStorage, error)
+	GetBlockStorage(ctx context.Context, name string) (*hetzner.BlockStorage, error)
+	CreateOrUpdateBlockStorage(ctx context.Context, req hetzner.BlockStorageCreateRequest) (*hetzner.BlockStorage, bool, string, error)
+	DeleteBlockStorage(ctx context.Context, name string) (bool, error)
+	AttachBlockStorage(ctx context.Context, name, instanceName string) (bool, string, error)
+	DetachBlockStorage(ctx context.Context, name string) (bool, string, error)
+}
+
 type statusResponse struct {
 	Status string `json:"status"`
 }
@@ -62,6 +79,7 @@ type resourceMetadata struct {
 	Kind            string `json:"kind"`
 	Ref             string `json:"ref"`
 	Tenant          string `json:"tenant,omitempty"`
+	Workspace       string `json:"workspace,omitempty"`
 	Region          string `json:"region,omitempty"`
 }
 
@@ -130,7 +148,7 @@ type wellknownEndpoint struct {
 	URL      string `json:"url"`
 }
 
-func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, catalogProvider CatalogProvider) *http.Server {
+func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, catalogProvider CatalogProvider, phase2Provider ComputeStorageProvider) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthz)
 	mux.HandleFunc("/readyz", readyz(store))
@@ -141,6 +159,15 @@ func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, c
 	mux.HandleFunc("/compute/v1/tenants/{tenant}/skus/{name}", getComputeSKU(catalogProvider))
 	mux.HandleFunc("/storage/v1/tenants/{tenant}/images", listImages(catalogProvider))
 	mux.HandleFunc("/storage/v1/tenants/{tenant}/images/{name}", getImage(catalogProvider))
+	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances", listInstances(phase2Provider, store))
+	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}", instanceCRUD(phase2Provider, store))
+	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/start", startInstance(phase2Provider, store))
+	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/stop", stopInstance(phase2Provider, store))
+	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/restart", restartInstance(phase2Provider, store))
+	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages", listBlockStorages(phase2Provider, store))
+	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}", blockStorageCRUD(phase2Provider, store))
+	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/attach", attachBlockStorage(phase2Provider, store))
+	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/detach", detachBlockStorage(phase2Provider, store))
 
 	return &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -352,6 +379,18 @@ func respondFromError(w http.ResponseWriter, err error, instance string) {
 		respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal-server-error", "Internal Server Error", "hetzner token is not configured", instance)
 		return
 	}
+	var providerErr hetzner.ProviderError
+	if errors.As(err, &providerErr) {
+		switch providerErr.Code {
+		case "invalid_request":
+			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", providerErr.Message, instance)
+		case "not_found":
+			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", providerErr.Message, instance)
+		default:
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal-server-error", "Internal Server Error", providerErr.Message, instance)
+		}
+		return
+	}
 	var apiErr hcloud.Error
 	if errors.As(err, &apiErr) {
 		switch apiErr.Code {
@@ -361,10 +400,16 @@ func respondFromError(w http.ResponseWriter, err error, instance string) {
 			respondProblem(w, http.StatusForbidden, "http://secapi.cloud/errors/forbidden", "Forbidden", apiErr.Message, instance)
 		case hcloud.ErrorCodeNotFound:
 			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", apiErr.Message, instance)
-		case hcloud.ErrorCodeConflict:
+		case hcloud.ErrorCodeConflict, hcloud.ErrorCodeLocked, hcloud.ErrorCodeResourceLocked, hcloud.ErrorCodeUniquenessError, hcloud.ErrorCodeVolumeAlreadyAttached:
 			respondProblem(w, http.StatusConflict, "http://secapi.cloud/errors/resource-conflict", "Conflict", apiErr.Message, instance)
-		case hcloud.ErrorCodeInvalidInput, hcloud.ErrorCodeJSONError:
+		case hcloud.ErrorCodeInvalidInput, hcloud.ErrorCodeJSONError, hcloud.ErrorCodeInvalidServerType, hcloud.ErrorCodeServerNotStopped:
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", apiErr.Message, instance)
+		case hcloud.ErrorCodeRateLimitExceeded, hcloud.ErrorCodeResourceLimitExceeded:
+			respondProblem(w, http.StatusTooManyRequests, "http://secapi.cloud/errors/rate-limited", "Too Many Requests", apiErr.Message, instance)
+		case hcloud.ErrorCodeResourceUnavailable, hcloud.ErrorCodeMaintenance, hcloud.ErrorCodeRobotUnavailable, hcloud.ErrorCodeTimeout, hcloud.ErrorCodeNoSpaceLeftInLocation:
+			respondProblem(w, http.StatusServiceUnavailable, "http://secapi.cloud/errors/provider-unavailable", "Service Unavailable", apiErr.Message, instance)
+		case hcloud.ErrorUnsupportedError:
+			respondProblem(w, http.StatusNotImplemented, "http://secapi.cloud/errors/not-implemented", "Not Implemented", apiErr.Message, instance)
 		default:
 			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal-server-error", "Internal Server Error", apiErr.Message, instance)
 		}

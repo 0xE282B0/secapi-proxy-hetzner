@@ -6,7 +6,7 @@ SERVICE_DIR := service
 MIGRATIONS_DIR := $(SERVICE_DIR)/db/migrations
 GO_ENV := GOCACHE=$(CURDIR)/.cache/go-build
 
-.PHONY: all bootstrap fmt lint generate test test-integration test-contract phase1-smoke conformance-smoke conformance-full build run migrate-up migrate-down sqlc-gen docker-build docker-run docker-push release ci-verify ci-unit ci-integration ci-contract ci-conformance ci-package
+.PHONY: all bootstrap fmt lint generate test test-integration test-contract phase1-smoke phase2-smoke conformance-smoke conformance-full build run migrate-up migrate-down sqlc-gen docker-build docker-run docker-push release ci-verify ci-unit ci-integration ci-contract ci-conformance ci-package
 
 all: build
 
@@ -47,6 +47,15 @@ phase1-smoke:
 		test -n "$$IMAGE_NAME"; \
 		curl -fsS "http://localhost:8080/storage/v1/tenants/dev/images/$$IMAGE_NAME" | grep -q "\"name\":\"$$IMAGE_NAME\""
 	@echo "Phase 1 smoke checks passed."
+
+phase2-smoke:
+	@echo "Checking Phase 2 endpoints on http://localhost:8080 ..."
+	@command -v jq >/dev/null
+	@curl -fsS http://localhost:8080/compute/v1/tenants/dev/workspaces/default/instances | jq -e '.items and .metadata' >/dev/null
+	@curl -fsS http://localhost:8080/storage/v1/tenants/dev/workspaces/default/block-storages | jq -e '.items and .metadata' >/dev/null
+	@curl -sS -X PUT http://localhost:8080/compute/v1/tenants/dev/workspaces/default/instances/invalid -H 'content-type: application/json' -d '{}' | jq -e '.status == 400' >/dev/null
+	@curl -sS -X PUT http://localhost:8080/storage/v1/tenants/dev/workspaces/default/block-storages/invalid -H 'content-type: application/json' -d '{}' | jq -e '.status == 400' >/dev/null
+	@echo "Phase 2 smoke checks passed."
 
 conformance-smoke:
 	@echo "conformance smoke placeholder: wire eu-sovereign-cloud/conformance in next phase"
