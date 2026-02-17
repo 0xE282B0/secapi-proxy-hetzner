@@ -1,0 +1,46 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"log"
+	"net/http"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/config"
+	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/httpserver"
+	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/state"
+)
+
+func main() {
+	cfg := config.Load()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	store, err := state.New(ctx, cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("db init failed: %v", err)
+	}
+	defer store.Close()
+
+	srv := httpserver.New(cfg, store)
+
+	go func() {
+		log.Printf("starting secapi-proxy-hetzner on %s", cfg.ListenAddr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("http server failed: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	stop()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("graceful shutdown failed: %v", err)
+	}
+}
