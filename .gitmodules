@@ -1,0 +1,12 @@
+[submodule "resources/secapi-spec"]
+	path = resources/secapi-spec
+	url = https://github.com/eu-sovereign-cloud/spec
+[submodule "resources/secapi-go-sdk"]
+	path = resources/secapi-go-sdk
+	url = https://github.com/eu-sovereign-cloud/go-sdk
+[submodule "resources/hetzner-cli"]
+	path = resources/hetzner-cli
+	url = https://github.com/hetznercloud/cli
+[submodule "resources/hetzner-go-sdk"]
+	path = resources/hetzner-go-sdk
+	url = https://github.com/hetznercloud/hcloud-go
