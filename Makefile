@@ -6,7 +6,7 @@ SERVICE_DIR := service
 MIGRATIONS_DIR := $(SERVICE_DIR)/db/migrations
 GO_ENV := GOCACHE=$(CURDIR)/.cache/go-build
 
-.PHONY: all bootstrap fmt lint generate test test-integration test-contract conformance-smoke conformance-full build run migrate-up migrate-down sqlc-gen docker-build docker-run docker-push release ci-verify ci-unit ci-integration ci-contract ci-conformance ci-package
+.PHONY: all bootstrap fmt lint generate test test-integration test-contract phase1-smoke conformance-smoke conformance-full build run migrate-up migrate-down sqlc-gen docker-build docker-run docker-push release ci-verify ci-unit ci-integration ci-contract ci-conformance ci-package
 
 all: build
 
@@ -30,6 +30,23 @@ test-contract:
 
 generate:
 	cd $(SERVICE_DIR) && $(GO_ENV) go generate ./...
+
+phase1-smoke:
+	@echo "Checking Phase 1 endpoints on http://localhost:8080 ..."
+	@command -v jq >/dev/null
+	@curl -fsS http://localhost:8080/healthz >/dev/null
+	@curl -fsS http://localhost:8080/readyz >/dev/null
+	@curl -fsS http://localhost:8080/.wellknown/secapi | grep -q '"version":"v1"'
+	@REGION_NAME=$$(curl -fsS http://localhost:8080/v1/regions | jq -r '.items[0].metadata.name'); \
+		test -n "$$REGION_NAME"; \
+		curl -fsS "http://localhost:8080/v1/regions/$$REGION_NAME" | grep -q "\"name\":\"$$REGION_NAME\""
+	@SKU_NAME=$$(curl -fsS http://localhost:8080/compute/v1/tenants/dev/skus | jq -r '.items[0].metadata.name'); \
+		test -n "$$SKU_NAME"; \
+		curl -fsS "http://localhost:8080/compute/v1/tenants/dev/skus/$$SKU_NAME" | grep -q "\"name\":\"$$SKU_NAME\""
+	@IMAGE_NAME=$$(curl -fsS http://localhost:8080/storage/v1/tenants/dev/images | jq -r '.items[0].metadata.name'); \
+		test -n "$$IMAGE_NAME"; \
+		curl -fsS "http://localhost:8080/storage/v1/tenants/dev/images/$$IMAGE_NAME" | grep -q "\"name\":\"$$IMAGE_NAME\""
+	@echo "Phase 1 smoke checks passed."
 
 conformance-smoke:
 	@echo "conformance smoke placeholder: wire eu-sovereign-cloud/conformance in next phase"

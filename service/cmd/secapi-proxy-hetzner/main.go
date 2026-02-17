@@ -11,6 +11,7 @@ import (
 
 	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/config"
 	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/httpserver"
+	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/provider/hetzner"
 	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/state"
 )
 
@@ -26,7 +27,8 @@ func main() {
 	}
 	defer store.Close()
 
-	srv := httpserver.New(cfg, store)
+	regionService := hetzner.NewRegionService(cfg)
+	srv := httpserver.New(cfg, store, regionService, regionService)
 
 	go func() {
 		log.Printf("starting secapi-proxy-hetzner on %s", cfg.ListenAddr)
