@@ -182,7 +182,7 @@ type wellknownEndpoint struct {
 	URL      string `json:"url"`
 }
 
-func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, catalogProvider CatalogProvider, phase2Provider ComputeStorageProvider) *http.Server {
+func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, catalogProvider CatalogProvider, computeStorageProvider ComputeStorageProvider) *http.Server {
 	mux := http.NewServeMux()
 	workspaceState := newWorkspaceStore()
 	authState := newAuthStore()
@@ -205,15 +205,15 @@ func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, c
 	mux.HandleFunc("/network/v1/tenants/{tenant}/skus/{name}", getNetworkSKU())
 	mux.HandleFunc("/storage/v1/tenants/{tenant}/images", listImages(catalogProvider))
 	mux.HandleFunc("/storage/v1/tenants/{tenant}/images/{name}", getImage(catalogProvider))
-	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances", listInstances(phase2Provider, store))
-	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}", instanceCRUD(phase2Provider, store))
-	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/start", startInstance(phase2Provider, store))
-	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/stop", stopInstance(phase2Provider, store))
-	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/restart", restartInstance(phase2Provider, store))
-	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages", listBlockStorages(phase2Provider, store))
-	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}", blockStorageCRUD(phase2Provider, store))
-	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/attach", attachBlockStorage(phase2Provider, store))
-	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/detach", detachBlockStorage(phase2Provider, store))
+	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances", listInstances(computeStorageProvider, store))
+	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}", instanceCRUD(computeStorageProvider, store))
+	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/start", startInstance(computeStorageProvider, store))
+	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/stop", stopInstance(computeStorageProvider, store))
+	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/restart", restartInstance(computeStorageProvider, store))
+	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages", listBlockStorages(computeStorageProvider, store))
+	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}", blockStorageCRUD(computeStorageProvider, store))
+	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/attach", attachBlockStorage(computeStorageProvider, store))
+	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/detach", detachBlockStorage(computeStorageProvider, store))
 
 	return &http.Server{
 		Addr:              cfg.ListenAddr,
