@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/state"
 )
 
 type workspaceIterator struct {
@@ -25,47 +26,7 @@ type workspaceStatusObject struct {
 	ResourceCount *int   `json:"resourceCount,omitempty"`
 }
 
-type workspaceStore struct {
-	mu    sync.RWMutex
-	items map[string]workspaceResource
-}
-
-func newWorkspaceStore() *workspaceStore {
-	return &workspaceStore{items: make(map[string]workspaceResource)}
-}
-
-func (s *workspaceStore) upsert(tenant, name string, resource workspaceResource) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.items[tenant+"/"+name] = resource
-}
-
-func (s *workspaceStore) get(tenant, name string) (workspaceResource, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	item, ok := s.items[tenant+"/"+name]
-	return item, ok
-}
-
-func (s *workspaceStore) list(tenant string) []workspaceResource {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]workspaceResource, 0, len(s.items))
-	for key, item := range s.items {
-		if strings.HasPrefix(key, tenant+"/") {
-			out = append(out, item)
-		}
-	}
-	return out
-}
-
-func (s *workspaceStore) delete(tenant, name string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.items, tenant+"/"+name)
-}
-
-func listWorkspaces(store *workspaceStore) http.HandlerFunc {
+func listWorkspaces(store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET is supported", r.URL.Path)
@@ -76,7 +37,15 @@ func listWorkspaces(store *workspaceStore) http.HandlerFunc {
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "tenant is required", r.URL.Path)
 			return
 		}
-		items := store.list(tenant)
+		workspaces, err := store.ListWorkspaces(r.Context(), tenant)
+		if err != nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to list workspaces", r.URL.Path)
+			return
+		}
+		items := make([]workspaceResource, 0, len(workspaces))
+		for _, item := range workspaces {
+			items = append(items, toWorkspaceResource(item, http.MethodGet, false))
+		}
 		respondJSON(w, http.StatusOK, workspaceIterator{
 			Items:    items,
 			Metadata: responseMetaObject{Provider: "seca.workspace/v1", Resource: "tenants/" + tenant + "/workspaces", Verb: http.MethodGet},
@@ -84,7 +53,7 @@ func listWorkspaces(store *workspaceStore) http.HandlerFunc {
 	}
 }
 
-func workspaceCRUD(store *workspaceStore) http.HandlerFunc {
+func workspaceCRUD(store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -99,7 +68,7 @@ func workspaceCRUD(store *workspaceStore) http.HandlerFunc {
 	}
 }
 
-func getWorkspace(store *workspaceStore) http.HandlerFunc {
+func getWorkspace(store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant := r.PathValue("tenant")
 		name := strings.ToLower(r.PathValue("name"))
@@ -107,18 +76,20 @@ func getWorkspace(store *workspaceStore) http.HandlerFunc {
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "tenant and workspace name are required", r.URL.Path)
 			return
 		}
-		item, ok := store.get(tenant, name)
-		if !ok {
+		item, err := store.GetWorkspace(r.Context(), tenant, name)
+		if err != nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to get workspace", r.URL.Path)
+			return
+		}
+		if item == nil {
 			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "workspace not found", r.URL.Path)
 			return
 		}
-		item.Metadata.Verb = http.MethodGet
-		item.Status.State = "active"
-		respondJSON(w, http.StatusOK, item)
+		respondJSON(w, http.StatusOK, toWorkspaceResource(*item, http.MethodGet, true))
 	}
 }
 
-func putWorkspace(store *workspaceStore) http.HandlerFunc {
+func putWorkspace(store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant := r.PathValue("tenant")
 		name := strings.ToLower(r.PathValue("name"))
@@ -132,42 +103,40 @@ func putWorkspace(store *workspaceStore) http.HandlerFunc {
 			return
 		}
 
-		now := time.Now().UTC().Format(time.RFC3339)
-		_, exists := store.get(tenant, name)
-		status := "creating"
+		region := strings.TrimSpace(req.Metadata.Region)
+		if region == "" {
+			region = "fsn1"
+		}
+
+		existing, err := store.GetWorkspace(r.Context(), tenant, name)
+		if err != nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to check existing workspace", r.URL.Path)
+			return
+		}
+		statusState := "creating"
 		code := http.StatusCreated
-		if exists {
-			status = "updating"
+		if existing != nil {
+			statusState = "updating"
 			code = http.StatusOK
 		}
-		item := workspaceResource{
-			Metadata: resourceMetadata{
-				Name:            name,
-				Provider:        "seca.workspace/v1",
-				Resource:        "tenants/" + tenant + "/workspaces/" + name,
-				Verb:            http.MethodPut,
-				CreatedAt:       now,
-				LastModifiedAt:  now,
-				ResourceVersion: 1,
-				APIVersion:      "v1",
-				Kind:            "workspace",
-				Ref:             "seca.workspace/v1/tenants/" + tenant + "/workspaces/" + name,
-				Tenant:          tenant,
-				Region:          req.Metadata.Region,
-			},
+		desired := state.WorkspaceResource{
+			Tenant: tenant,
+			Name:   name,
+			Region: region,
 			Labels: req.Labels,
 			Spec:   req.Spec,
-			Status: workspaceStatusObject{State: status},
+			Status: map[string]any{"state": statusState},
 		}
-		if item.Metadata.Region == "" {
-			item.Metadata.Region = "fsn1"
+		saved, err := store.UpsertWorkspace(r.Context(), desired)
+		if err != nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to save workspace", r.URL.Path)
+			return
 		}
-		store.upsert(tenant, name, item)
-		respondJSON(w, code, item)
+		respondJSON(w, code, toWorkspaceResource(*saved, http.MethodPut, false))
 	}
 }
 
-func deleteWorkspace(store *workspaceStore) http.HandlerFunc {
+func deleteWorkspace(store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant := r.PathValue("tenant")
 		name := strings.ToLower(r.PathValue("name"))
@@ -175,11 +144,44 @@ func deleteWorkspace(store *workspaceStore) http.HandlerFunc {
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "tenant and workspace name are required", r.URL.Path)
 			return
 		}
-		if _, ok := store.get(tenant, name); !ok {
+		deleted, err := store.SoftDeleteWorkspace(r.Context(), tenant, name)
+		if err != nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to delete workspace", r.URL.Path)
+			return
+		}
+		if !deleted {
 			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "workspace not found", r.URL.Path)
 			return
 		}
-		store.delete(tenant, name)
 		respondJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+	}
+}
+
+func toWorkspaceResource(item state.WorkspaceResource, verb string, forceActive bool) workspaceResource {
+	stateValue, _ := item.Status["state"].(string)
+	if stateValue == "" {
+		stateValue = "active"
+	}
+	if forceActive {
+		stateValue = "active"
+	}
+	return workspaceResource{
+		Metadata: resourceMetadata{
+			Name:            item.Name,
+			Provider:        "seca.workspace/v1",
+			Resource:        "tenants/" + item.Tenant + "/workspaces/" + item.Name,
+			Verb:            verb,
+			CreatedAt:       item.CreatedAt.Format(time.RFC3339),
+			LastModifiedAt:  item.UpdatedAt.Format(time.RFC3339),
+			ResourceVersion: item.ResourceVersion,
+			APIVersion:      "v1",
+			Kind:            "workspace",
+			Ref:             "seca.workspace/v1/tenants/" + item.Tenant + "/workspaces/" + item.Name,
+			Tenant:          item.Tenant,
+			Region:          item.Region,
+		},
+		Labels: item.Labels,
+		Spec:   item.Spec,
+		Status: workspaceStatusObject{State: stateValue},
 	}
 }

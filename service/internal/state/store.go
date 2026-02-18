@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	dbsqlc "github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/db/sqlc"
 	"github.com/jackc/pgx/v5"
@@ -41,6 +42,18 @@ type AuthResource struct {
 	Spec            map[string]any
 	Status          map[string]any
 	ResourceVersion int64
+}
+
+type WorkspaceResource struct {
+	Tenant          string
+	Name            string
+	Region          string
+	Labels          map[string]string
+	Spec            map[string]any
+	Status          map[string]any
+	ResourceVersion int64
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 func New(ctx context.Context, databaseURL string) (*Store, error) {
@@ -276,6 +289,76 @@ func (s *Store) SoftDeleteRoleAssignment(ctx context.Context, tenant, name strin
 	return count > 0, nil
 }
 
+func (s *Store) UpsertWorkspace(ctx context.Context, resource WorkspaceResource) (*WorkspaceResource, error) {
+	labelsJSON, err := json.Marshal(resource.Labels)
+	if err != nil {
+		return nil, fmt.Errorf("marshal workspace labels: %w", err)
+	}
+	specJSON, err := json.Marshal(resource.Spec)
+	if err != nil {
+		return nil, fmt.Errorf("marshal workspace spec: %w", err)
+	}
+	statusJSON, err := json.Marshal(resource.Status)
+	if err != nil {
+		return nil, fmt.Errorf("marshal workspace status: %w", err)
+	}
+	row, err := s.queries.UpsertWorkspace(ctx, dbsqlc.UpsertWorkspaceParams{
+		Tenant: resource.Tenant,
+		Name:   resource.Name,
+		Region: resource.Region,
+		Labels: labelsJSON,
+		Spec:   specJSON,
+		Status: statusJSON,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert workspace: %w", err)
+	}
+	out, err := workspaceResourceFromRow(row)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (s *Store) GetWorkspace(ctx context.Context, tenant, name string) (*WorkspaceResource, error) {
+	row, err := s.queries.GetWorkspace(ctx, dbsqlc.GetWorkspaceParams{Tenant: tenant, Name: name})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get workspace: %w", err)
+	}
+	resource, err := workspaceResourceFromRow(row)
+	if err != nil {
+		return nil, err
+	}
+	return &resource, nil
+}
+
+func (s *Store) ListWorkspaces(ctx context.Context, tenant string) ([]WorkspaceResource, error) {
+	rows, err := s.queries.ListWorkspacesByTenant(ctx, tenant)
+	if err != nil {
+		return nil, fmt.Errorf("list workspaces: %w", err)
+	}
+	out := make([]WorkspaceResource, 0, len(rows))
+	for _, row := range rows {
+		resource, convErr := workspaceResourceFromRow(row)
+		if convErr != nil {
+			return nil, convErr
+		}
+		out = append(out, resource)
+	}
+	return out, nil
+}
+
+func (s *Store) SoftDeleteWorkspace(ctx context.Context, tenant, name string) (bool, error) {
+	count, err := s.queries.SoftDeleteWorkspace(ctx, dbsqlc.SoftDeleteWorkspaceParams{Tenant: tenant, Name: name})
+	if err != nil {
+		return false, fmt.Errorf("soft delete workspace: %w", err)
+	}
+	return count > 0, nil
+}
+
 func authResourceFromRoleRow(row dbsqlc.AuthRole) (AuthResource, error) {
 	labels := map[string]string{}
 	if err := json.Unmarshal(row.Labels, &labels); err != nil {
@@ -319,5 +402,31 @@ func authResourceFromRoleAssignmentRow(row dbsqlc.AuthRoleAssignment) (AuthResou
 		Spec:            spec,
 		Status:          status,
 		ResourceVersion: row.ResourceVersion,
+	}, nil
+}
+
+func workspaceResourceFromRow(row dbsqlc.Workspace) (WorkspaceResource, error) {
+	labels := map[string]string{}
+	if err := json.Unmarshal(row.Labels, &labels); err != nil {
+		return WorkspaceResource{}, fmt.Errorf("unmarshal workspace labels: %w", err)
+	}
+	spec := map[string]any{}
+	if err := json.Unmarshal(row.Spec, &spec); err != nil {
+		return WorkspaceResource{}, fmt.Errorf("unmarshal workspace spec: %w", err)
+	}
+	status := map[string]any{}
+	if err := json.Unmarshal(row.Status, &status); err != nil {
+		return WorkspaceResource{}, fmt.Errorf("unmarshal workspace status: %w", err)
+	}
+	return WorkspaceResource{
+		Tenant:          row.Tenant,
+		Name:            row.Name,
+		Region:          row.Region,
+		Labels:          labels,
+		Spec:            spec,
+		Status:          status,
+		ResourceVersion: row.ResourceVersion,
+		CreatedAt:       row.CreatedAt.Time.UTC(),
+		UpdatedAt:       row.UpdatedAt.Time.UTC(),
 	}, nil
 }

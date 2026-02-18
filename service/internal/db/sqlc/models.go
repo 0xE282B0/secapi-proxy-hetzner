@@ -57,6 +57,20 @@ type ResourceBinding struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Workspace struct {
+	ID              int64              `json:"id"`
+	Tenant          string             `json:"tenant"`
+	Name            string             `json:"name"`
+	Region          string             `json:"region"`
+	Labels          []byte             `json:"labels"`
+	Spec            []byte             `json:"spec"`
+	Status          []byte             `json:"status"`
+	ResourceVersion int64              `json:"resource_version"`
+	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type WorkspaceProviderCredential struct {
 	ID                int64              `json:"id"`
 	Tenant            string             `json:"tenant"`

@@ -184,7 +184,6 @@ type wellknownEndpoint struct {
 
 func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, catalogProvider CatalogProvider, computeStorageProvider ComputeStorageProvider) *http.Server {
 	mux := http.NewServeMux()
-	workspaceState := newWorkspaceStore()
 	mux.HandleFunc("/healthz", healthz)
 	mux.HandleFunc("/readyz", readyz(store))
 	mux.HandleFunc("/.wellknown/secapi", wellknown(cfg))
@@ -194,8 +193,8 @@ func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, c
 	mux.HandleFunc("/v1/tenants/{tenant}/roles/{name}", roleCRUD(store))
 	mux.HandleFunc("/v1/tenants/{tenant}/role-assignments", listRoleAssignments(store))
 	mux.HandleFunc("/v1/tenants/{tenant}/role-assignments/{name}", roleAssignmentCRUD(store))
-	mux.HandleFunc("/workspace/v1/tenants/{tenant}/workspaces", listWorkspaces(workspaceState))
-	mux.HandleFunc("/workspace/v1/tenants/{tenant}/workspaces/{name}", workspaceCRUD(workspaceState))
+	mux.HandleFunc("/workspace/v1/tenants/{tenant}/workspaces", listWorkspaces(store))
+	mux.HandleFunc("/workspace/v1/tenants/{tenant}/workspaces/{name}", workspaceCRUD(store))
 	mux.HandleFunc("/compute/v1/tenants/{tenant}/skus", listComputeSKUs(catalogProvider))
 	mux.HandleFunc("/compute/v1/tenants/{tenant}/skus/{name}", getComputeSKU(catalogProvider))
 	mux.HandleFunc("/storage/v1/tenants/{tenant}/skus", listStorageSKUs())
