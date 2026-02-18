@@ -47,6 +47,8 @@ services:
       SECA_LISTEN_ADDR: ":8080"
       SECA_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/secapi_proxy?sslmode=disable"
       SECA_PUBLIC_BASE_URL: "http://localhost:8080"
+      SECA_ADMIN_TOKEN: "${SECA_ADMIN_TOKEN:-dev-admin-token}"
+      SECA_CREDENTIALS_KEY: "${SECA_CREDENTIALS_KEY:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}"
       SECA_CONFORMANCE_MODE: "${SECA_CONFORMANCE_MODE:-true}"
       SECA_HETZNER_AVAILABILITY_CACHE_TTL: "${SECA_HETZNER_AVAILABILITY_CACHE_TTL:-60s}"
       HCLOUD_TOKEN: "${HCLOUD_TOKEN:-}"

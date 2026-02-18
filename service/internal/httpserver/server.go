@@ -195,7 +195,10 @@ func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, c
 	mux.HandleFunc("/v1/tenants/{tenant}/role-assignments/{name}", roleAssignmentCRUD(store))
 	mux.HandleFunc("/workspace/v1/tenants/{tenant}/workspaces", listWorkspaces(store))
 	mux.HandleFunc("/workspace/v1/tenants/{tenant}/workspaces/{name}", workspaceCRUD(store))
-	mux.HandleFunc("/admin/v1/tenants/{tenant}/workspaces/{workspace}/providers/hetzner", adminWorkspaceHetznerBinding(store, regionProvider))
+	mux.HandleFunc(
+		"/admin/v1/tenants/{tenant}/workspaces/{workspace}/providers/hetzner",
+		requireAdminAuth(cfg.AdminToken, adminWorkspaceHetznerBinding(store, regionProvider)),
+	)
 	mux.HandleFunc("/compute/v1/tenants/{tenant}/skus", listComputeSKUs(catalogProvider))
 	mux.HandleFunc("/compute/v1/tenants/{tenant}/skus/{name}", getComputeSKU(catalogProvider))
 	mux.HandleFunc("/storage/v1/tenants/{tenant}/skus", listStorageSKUs())

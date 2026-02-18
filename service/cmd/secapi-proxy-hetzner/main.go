@@ -17,11 +17,17 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if cfg.AdminToken == "" {
+		log.Fatal("SECA_ADMIN_TOKEN must be configured")
+	}
+	if cfg.CredentialsKey == "" {
+		log.Fatal("SECA_CREDENTIALS_KEY must be configured")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	store, err := state.New(ctx, cfg.DatabaseURL)
+	store, err := state.New(ctx, cfg.DatabaseURL, cfg.CredentialsKey)
 	if err != nil {
 		log.Fatalf("db init failed: %v", err)
 	}

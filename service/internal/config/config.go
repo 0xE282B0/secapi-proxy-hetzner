@@ -11,6 +11,8 @@ type Config struct {
 	LogLevel             string
 	DatabaseURL          string
 	PublicBaseURL        string
+	AdminToken           string
+	CredentialsKey       string
 	HetznerToken         string
 	HetznerCloudAPIURL   string
 	HetznerPrimaryAPIURL string
@@ -24,6 +26,8 @@ func Load() Config {
 		LogLevel:             getenvDefault("SECA_LOG_LEVEL", "info"),
 		DatabaseURL:          getenvDefault("SECA_DATABASE_URL", "postgres://postgres:postgres@localhost:5432/secapi_proxy?sslmode=disable"),
 		PublicBaseURL:        strings.TrimRight(getenvDefault("SECA_PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
+		AdminToken:           getenvDefault("SECA_ADMIN_TOKEN", ""),
+		CredentialsKey:       getenvDefault("SECA_CREDENTIALS_KEY", ""),
 		HetznerToken:         getenvFirst("HCLOUD_TOKEN", "HETZNER_API_TOKEN"),
 		HetznerCloudAPIURL:   strings.TrimRight(getenvFirstDefault("https://api.hetzner.cloud/v1", "HCLOUD_ENDPOINT", "HETZNER_CLOUD_API_URL"), "/"),
 		HetznerPrimaryAPIURL: strings.TrimRight(getenvFirstDefault("https://api.hetzner.com/v1", "HCLOUD_HETZNER_ENDPOINT", "HETZNER_PRIMARY_API_URL"), "/"),

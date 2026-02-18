@@ -14,8 +14,9 @@ import (
 )
 
 type Store struct {
-	pool    *pgxpool.Pool
-	queries *dbsqlc.Queries
+	pool       *pgxpool.Pool
+	queries    *dbsqlc.Queries
+	tokenCodec *tokenCodec
 }
 
 type ResourceBinding struct {
@@ -65,7 +66,7 @@ type WorkspaceProviderCredential struct {
 	APIToken    string
 }
 
-func New(ctx context.Context, databaseURL string) (*Store, error) {
+func New(ctx context.Context, databaseURL, credentialsKey string) (*Store, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("create pool: %w", err)
@@ -74,7 +75,12 @@ func New(ctx context.Context, databaseURL string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping db: %w", err)
 	}
-	return &Store{pool: pool, queries: dbsqlc.New(pool)}, nil
+	codec, err := newTokenCodec(credentialsKey)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("init token codec: %w", err)
+	}
+	return &Store{pool: pool, queries: dbsqlc.New(pool), tokenCodec: codec}, nil
 }
 
 func (s *Store) Ping(ctx context.Context) error {
@@ -369,6 +375,10 @@ func (s *Store) SoftDeleteWorkspace(ctx context.Context, tenant, name string) (b
 }
 
 func (s *Store) UpsertWorkspaceProviderCredential(ctx context.Context, cred WorkspaceProviderCredential) (*WorkspaceProviderCredential, error) {
+	encryptedToken, err := s.tokenCodec.Encrypt(cred.APIToken)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt workspace provider credential token: %w", err)
+	}
 	var projectRef pgtype.Text
 	if cred.ProjectRef != "" {
 		projectRef = pgtype.Text{String: cred.ProjectRef, Valid: true}
@@ -383,12 +393,15 @@ func (s *Store) UpsertWorkspaceProviderCredential(ctx context.Context, cred Work
 		Provider:          cred.Provider,
 		ProjectRef:        projectRef,
 		ApiEndpoint:       apiEndpoint,
-		ApiTokenEncrypted: cred.APIToken,
+		ApiTokenEncrypted: encryptedToken,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("upsert workspace provider credential: %w", err)
 	}
-	out := workspaceProviderCredentialFromRow(row)
+	out, convErr := s.workspaceProviderCredentialFromRow(row)
+	if convErr != nil {
+		return nil, convErr
+	}
 	return &out, nil
 }
 
@@ -402,7 +415,10 @@ func (s *Store) GetWorkspaceProviderCredential(ctx context.Context, tenant, work
 		}
 		return nil, fmt.Errorf("get workspace provider credential: %w", err)
 	}
-	out := workspaceProviderCredentialFromRow(row)
+	out, convErr := s.workspaceProviderCredentialFromRow(row)
+	if convErr != nil {
+		return nil, convErr
+	}
 	return &out, nil
 }
 
@@ -488,18 +504,22 @@ func workspaceResourceFromRow(row dbsqlc.Workspace) (WorkspaceResource, error) {
 	}, nil
 }
 
-func workspaceProviderCredentialFromRow(row dbsqlc.WorkspaceProviderCredential) WorkspaceProviderCredential {
+func (s *Store) workspaceProviderCredentialFromRow(row dbsqlc.WorkspaceProviderCredential) (WorkspaceProviderCredential, error) {
 	out := WorkspaceProviderCredential{
 		Tenant:    row.Tenant,
 		Workspace: row.Workspace,
 		Provider:  row.Provider,
-		APIToken:  row.ApiTokenEncrypted, // TODO: Replace with encrypted-at-rest secret storage + decryption.
 	}
+	token, err := s.tokenCodec.Decrypt(row.ApiTokenEncrypted)
+	if err != nil {
+		return WorkspaceProviderCredential{}, fmt.Errorf("decrypt workspace provider credential token: %w", err)
+	}
+	out.APIToken = token
 	if row.ProjectRef.Valid {
 		out.ProjectRef = row.ProjectRef.String
 	}
 	if row.ApiEndpoint.Valid {
 		out.APIEndpoint = row.ApiEndpoint.String
 	}
-	return out
+	return out, nil
 }

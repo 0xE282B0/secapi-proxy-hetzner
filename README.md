@@ -50,6 +50,9 @@ Health endpoints:
 
 ```bash
 export HCLOUD_TOKEN='<token-from-hetzner-console>'
+export SECA_ADMIN_TOKEN='dev-admin-token'
+# 32-byte key, base64 encoded (example below is for local dev only)
+export SECA_CREDENTIALS_KEY='MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY='
 ```
 
 Optional endpoint overrides:
@@ -62,6 +65,9 @@ export SECA_HETZNER_AVAILABILITY_CACHE_TTL='60s'
 
 `SECA_HETZNER_AVAILABILITY_CACHE_TTL` controls how long server-type availability
 is cached before refetching from Hetzner. Set `0s` to disable caching.
+
+`SECA_ADMIN_TOKEN` protects `/admin/v1/...` endpoints via Bearer auth.  
+`SECA_CREDENTIALS_KEY` is required and encrypts persisted workspace provider tokens at rest.
 
 ## Persistence stack
 
