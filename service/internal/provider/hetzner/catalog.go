@@ -40,7 +40,7 @@ func (s *RegionService) ListComputeSKUs(ctx context.Context) ([]ComputeSKU, erro
 	if !s.configured {
 		return nil, ErrNotConfigured
 	}
-	serverTypes, err := s.client.ServerType.All(ctx)
+	serverTypes, err := s.listServerTypes(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -235,7 +235,7 @@ func (s *RegionService) serverTypeCandidatesForRegion(ctx context.Context, reque
 	if requested == nil || region == "" {
 		return []*hcloud.ServerType{requested}, nil
 	}
-	all, err := s.client.ServerType.All(ctx)
+	all, err := s.listServerTypes(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"sync"
+	"time"
 
 	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/config"
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
@@ -31,7 +33,12 @@ type RegionService struct {
 	publicBase      string
 	cloudAPIURL     string
 	apiURL          string
+	availCacheTTL   time.Duration
 	conformanceMode bool
+
+	serverTypesCacheMu sync.RWMutex
+	serverTypesCacheAt time.Time
+	serverTypesCache   []*hcloud.ServerType
 }
 
 func NewRegionService(cfg config.Config) *RegionService {
@@ -47,8 +54,46 @@ func NewRegionService(cfg config.Config) *RegionService {
 		publicBase:      cfg.PublicBaseURL,
 		cloudAPIURL:     cfg.HetznerCloudAPIURL,
 		apiURL:          cfg.HetznerPrimaryAPIURL,
+		availCacheTTL:   cfg.HetznerAvailCacheTTL,
 		conformanceMode: cfg.ConformanceMode,
 	}
+}
+
+func (s *RegionService) listServerTypes(ctx context.Context) ([]*hcloud.ServerType, error) {
+	if s.availCacheTTL <= 0 {
+		return s.client.ServerType.All(ctx)
+	}
+
+	now := time.Now()
+	s.serverTypesCacheMu.RLock()
+	if len(s.serverTypesCache) > 0 && now.Sub(s.serverTypesCacheAt) < s.availCacheTTL {
+		cached := cloneServerTypes(s.serverTypesCache)
+		s.serverTypesCacheMu.RUnlock()
+		return cached, nil
+	}
+	s.serverTypesCacheMu.RUnlock()
+
+	serverTypes, err := s.client.ServerType.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cloned := cloneServerTypes(serverTypes)
+
+	s.serverTypesCacheMu.Lock()
+	s.serverTypesCache = cloneServerTypes(cloned)
+	s.serverTypesCacheAt = time.Now()
+	s.serverTypesCacheMu.Unlock()
+
+	return cloned, nil
+}
+
+func cloneServerTypes(in []*hcloud.ServerType) []*hcloud.ServerType {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]*hcloud.ServerType, len(in))
+	copy(out, in)
+	return out
 }
 
 func (s *RegionService) ListRegions(ctx context.Context) ([]Region, error) {

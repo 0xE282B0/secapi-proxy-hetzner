@@ -57,7 +57,11 @@ Optional endpoint overrides:
 ```bash
 export HCLOUD_ENDPOINT='https://api.hetzner.cloud/v1'
 export HCLOUD_HETZNER_ENDPOINT='https://api.hetzner.com/v1'
+export SECA_HETZNER_AVAILABILITY_CACHE_TTL='60s'
 ```
+
+`SECA_HETZNER_AVAILABILITY_CACHE_TTL` controls how long server-type availability
+is cached before refetching from Hetzner. Set `0s` to disable caching.
 
 ## Persistence stack
 
