@@ -5,8 +5,9 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/state"
 )
 
 type authIterator struct {
@@ -21,20 +22,7 @@ type authResource struct {
 	Status   workspaceStatusObject `json:"status"`
 }
 
-type authStore struct {
-	mu              sync.RWMutex
-	roles           map[string]authResource
-	roleAssignments map[string]authResource
-}
-
-func newAuthStore() *authStore {
-	return &authStore{
-		roles:           map[string]authResource{},
-		roleAssignments: map[string]authResource{},
-	}
-}
-
-func listRoles(store *authStore) http.HandlerFunc {
+func listRoles(store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET is supported", r.URL.Path)
@@ -45,19 +33,30 @@ func listRoles(store *authStore) http.HandlerFunc {
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "tenant is required", r.URL.Path)
 			return
 		}
-		items := store.list(store.roles, tenant)
+		items, err := store.ListRoles(r.Context(), tenant)
+		if err != nil {
+			respondFromError(w, err, r.URL.Path)
+			return
+		}
+		out := make([]authResource, 0, len(items))
+		for _, item := range items {
+			out = append(out, toAuthResource("roles", "role", http.MethodGet, item))
+		}
+		sort.Slice(out, func(i, j int) bool {
+			return out[i].Metadata.Name < out[j].Metadata.Name
+		})
 		respondJSON(w, http.StatusOK, authIterator{
-			Items:    items,
+			Items:    out,
 			Metadata: responseMetaObject{Provider: "seca.authorization/v1", Resource: "tenants/" + tenant + "/roles", Verb: http.MethodGet},
 		})
 	}
 }
 
-func roleCRUD(store *authStore) http.HandlerFunc {
-	return authCRUD(store, store.roles, "roles", "role")
+func roleCRUD(store *state.Store) http.HandlerFunc {
+	return authCRUD(store, "roles", "role")
 }
 
-func listRoleAssignments(store *authStore) http.HandlerFunc {
+func listRoleAssignments(store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET is supported", r.URL.Path)
@@ -68,41 +67,52 @@ func listRoleAssignments(store *authStore) http.HandlerFunc {
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "tenant is required", r.URL.Path)
 			return
 		}
-		items := store.list(store.roleAssignments, tenant)
+		items, err := store.ListRoleAssignments(r.Context(), tenant)
+		if err != nil {
+			respondFromError(w, err, r.URL.Path)
+			return
+		}
+		out := make([]authResource, 0, len(items))
+		for _, item := range items {
+			out = append(out, toAuthResource("role-assignments", "role-assignment", http.MethodGet, item))
+		}
+		sort.Slice(out, func(i, j int) bool {
+			return out[i].Metadata.Name < out[j].Metadata.Name
+		})
 		respondJSON(w, http.StatusOK, authIterator{
-			Items:    items,
+			Items:    out,
 			Metadata: responseMetaObject{Provider: "seca.authorization/v1", Resource: "tenants/" + tenant + "/role-assignments", Verb: http.MethodGet},
 		})
 	}
 }
 
-func roleAssignmentCRUD(store *authStore) http.HandlerFunc {
-	return authCRUD(store, store.roleAssignments, "role-assignments", "role-assignment")
+func roleAssignmentCRUD(store *state.Store) http.HandlerFunc {
+	return authCRUD(store, "role-assignments", "role-assignment")
 }
 
-func authCRUD(store *authStore, bucket map[string]authResource, collection, kind string) http.HandlerFunc {
+func authCRUD(store *state.Store, collection, kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			store.mu.RLock()
-			defer store.mu.RUnlock()
-			tenant, name, key, ok := authPath(r, collection)
+			tenant, name, _, ok := authPath(r, collection)
 			if !ok {
 				respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "tenant and name are required", r.URL.Path)
 				return
 			}
-			item, found := bucket[key]
-			if !found {
+			item, err := getAuthResource(r, store, collection, tenant, name)
+			if err != nil {
+				respondFromError(w, err, r.URL.Path)
+				return
+			}
+			if item == nil {
 				respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", kind+" not found", r.URL.Path)
 				return
 			}
-			item.Metadata.Verb = http.MethodGet
-			item.Metadata.Tenant = tenant
-			item.Metadata.Name = name
-			item.Status.State = "active"
-			respondJSON(w, http.StatusOK, item)
+			out := toAuthResource(collection, kind, http.MethodGet, *item)
+			out.Status.State = "active"
+			respondJSON(w, http.StatusOK, out)
 		case http.MethodPut:
-			tenant, name, key, ok := authPath(r, collection)
+			tenant, name, _, ok := authPath(r, collection)
 			if !ok {
 				respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "tenant and name are required", r.URL.Path)
 				return
@@ -112,45 +122,53 @@ func authCRUD(store *authStore, bucket map[string]authResource, collection, kind
 				respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "invalid json body", r.URL.Path)
 				return
 			}
-			now := time.Now().UTC().Format(time.RFC3339)
-			store.mu.Lock()
-			_, exists := bucket[key]
-			state := "creating"
+
+			existing, err := getAuthResource(r, store, collection, tenant, name)
+			if err != nil {
+				respondFromError(w, err, r.URL.Path)
+				return
+			}
+			stateValue := "creating"
 			code := http.StatusCreated
-			if exists {
-				state = "updating"
+			if existing != nil {
+				stateValue = "updating"
 				code = http.StatusOK
 			}
-			item := authResource{
-				Metadata: resourceMetadata{
-					Name:            name,
-					Provider:        "seca.authorization/v1",
-					Resource:        "tenants/" + tenant + "/" + collection + "/" + name,
-					Verb:            http.MethodPut,
-					CreatedAt:       now,
-					LastModifiedAt:  now,
-					ResourceVersion: 1,
-					APIVersion:      "v1",
-					Kind:            kind,
-					Ref:             "seca.authorization/v1/tenants/" + tenant + "/" + collection + "/" + name,
-					Tenant:          tenant,
-				},
+
+			dbRecord := state.AuthResource{
+				Tenant: tenant,
+				Name:   name,
 				Labels: req.Labels,
 				Spec:   req.Spec,
-				Status: workspaceStatusObject{State: state},
+				Status: map[string]any{"state": stateValue},
 			}
-			bucket[key] = item
-			store.mu.Unlock()
-			respondJSON(w, code, item)
+			if err := upsertAuthResource(r, store, collection, dbRecord); err != nil {
+				respondFromError(w, err, r.URL.Path)
+				return
+			}
+
+			stored, err := getAuthResource(r, store, collection, tenant, name)
+			if err != nil {
+				respondFromError(w, err, r.URL.Path)
+				return
+			}
+			if stored == nil {
+				respondProblem(w, http.StatusServiceUnavailable, "http://secapi.cloud/errors/provider-unavailable", "Service Unavailable", "failed to persist auth resource", r.URL.Path)
+				return
+			}
+			out := toAuthResource(collection, kind, http.MethodPut, *stored)
+			out.Status.State = stateValue
+			respondJSON(w, code, out)
 		case http.MethodDelete:
-			_, _, key, ok := authPath(r, collection)
+			tenant, name, _, ok := authPath(r, collection)
 			if !ok {
 				respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "tenant and name are required", r.URL.Path)
 				return
 			}
-			store.mu.Lock()
-			delete(bucket, key)
-			store.mu.Unlock()
+			if err := softDeleteAuthResource(r, store, collection, tenant, name); err != nil {
+				respondFromError(w, err, r.URL.Path)
+				return
+			}
 			w.WriteHeader(http.StatusAccepted)
 		default:
 			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET, PUT and DELETE are supported", r.URL.Path)
@@ -167,18 +185,63 @@ func authPath(r *http.Request, collection string) (tenant, name, key string, ok 
 	return tenant, name, tenant + "/" + collection + "/" + name, true
 }
 
-func (s *authStore) list(bucket map[string]authResource, tenant string) []authResource {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]authResource, 0)
-	prefix := tenant + "/"
-	for key, value := range bucket {
-		if strings.HasPrefix(key, prefix) {
-			out = append(out, value)
-		}
+func getAuthResource(r *http.Request, store *state.Store, collection, tenant, name string) (*state.AuthResource, error) {
+	switch collection {
+	case "roles":
+		return store.GetRole(r.Context(), tenant, name)
+	case "role-assignments":
+		return store.GetRoleAssignment(r.Context(), tenant, name)
+	default:
+		return nil, nil
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].Metadata.Name < out[j].Metadata.Name
-	})
-	return out
+}
+
+func upsertAuthResource(r *http.Request, store *state.Store, collection string, resource state.AuthResource) error {
+	switch collection {
+	case "roles":
+		return store.UpsertRole(r.Context(), resource)
+	case "role-assignments":
+		return store.UpsertRoleAssignment(r.Context(), resource)
+	default:
+		return nil
+	}
+}
+
+func softDeleteAuthResource(r *http.Request, store *state.Store, collection, tenant, name string) error {
+	switch collection {
+	case "roles":
+		_, err := store.SoftDeleteRole(r.Context(), tenant, name)
+		return err
+	case "role-assignments":
+		_, err := store.SoftDeleteRoleAssignment(r.Context(), tenant, name)
+		return err
+	default:
+		return nil
+	}
+}
+
+func toAuthResource(collection, kind, verb string, resource state.AuthResource) authResource {
+	now := time.Now().UTC().Format(time.RFC3339)
+	statusState := "active"
+	if rawState, ok := resource.Status["state"].(string); ok && rawState != "" {
+		statusState = strings.ToLower(rawState)
+	}
+	return authResource{
+		Metadata: resourceMetadata{
+			Name:            resource.Name,
+			Provider:        "seca.authorization/v1",
+			Resource:        "tenants/" + resource.Tenant + "/" + collection + "/" + resource.Name,
+			Verb:            verb,
+			CreatedAt:       now,
+			LastModifiedAt:  now,
+			ResourceVersion: resource.ResourceVersion,
+			APIVersion:      "v1",
+			Kind:            kind,
+			Ref:             "seca.authorization/v1/tenants/" + resource.Tenant + "/" + collection + "/" + resource.Name,
+			Tenant:          resource.Tenant,
+		},
+		Labels: resource.Labels,
+		Spec:   resource.Spec,
+		Status: workspaceStatusObject{State: statusState},
+	}
 }
