@@ -1,10 +1,14 @@
 package httpserver
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/provider/hetzner"
+	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/state"
 )
 
 func scopeFromPath(w http.ResponseWriter, r *http.Request) (string, string, bool) {
@@ -28,6 +32,38 @@ func scopedNameFromPath(w http.ResponseWriter, r *http.Request, nameErr string) 
 		return "", "", "", false
 	}
 	return tenant, workspace, name, true
+}
+
+func workspaceExecutionContext(w http.ResponseWriter, r *http.Request, store *state.Store, tenant, workspace string) (context.Context, bool) {
+	ws, err := store.GetWorkspace(r.Context(), tenant, workspace)
+	if err != nil {
+		respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to resolve workspace", r.URL.Path)
+		return nil, false
+	}
+	if ws == nil {
+		respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "workspace not found", r.URL.Path)
+		return nil, false
+	}
+	stateValue, _ := ws.Status["state"].(string)
+	if strings.ToLower(strings.TrimSpace(stateValue)) != "active" {
+		respondProblem(w, http.StatusConflict, "http://secapi.cloud/errors/resource-conflict", "Conflict", "workspace is not active", r.URL.Path)
+		return nil, false
+	}
+
+	cred, err := store.GetWorkspaceProviderCredential(r.Context(), tenant, workspace, "hetzner")
+	if err != nil {
+		respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to resolve workspace credentials", r.URL.Path)
+		return nil, false
+	}
+	if cred == nil || strings.TrimSpace(cred.APIToken) == "" {
+		respondProblem(w, http.StatusConflict, "http://secapi.cloud/errors/resource-conflict", "Conflict", "workspace has no hetzner credentials", r.URL.Path)
+		return nil, false
+	}
+	ctx := hetzner.WithWorkspaceCredential(r.Context(), hetzner.WorkspaceCredential{
+		Token:       cred.APIToken,
+		CloudAPIURL: cred.APIEndpoint,
+	})
+	return ctx, true
 }
 
 func resourceNameFromRef(ref string) string {

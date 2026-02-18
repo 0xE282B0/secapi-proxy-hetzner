@@ -57,7 +57,11 @@ func listBlockStorages(provider ComputeStorageProvider, store *state.Store) http
 		if !ok {
 			return
 		}
-		volumes, err := provider.ListBlockStorages(r.Context())
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
+			return
+		}
+		volumes, err := provider.ListBlockStorages(ctx)
 		if err != nil {
 			respondFromError(w, err, r.URL.Path)
 			return
@@ -70,7 +74,7 @@ func listBlockStorages(provider ComputeStorageProvider, store *state.Store) http
 			} else {
 				items = append(items, toBlockStorageResource(tenant, workspace, volume, http.MethodGet, "active", nil))
 			}
-			_ = store.UpsertResourceBinding(r.Context(), state.ResourceBinding{
+			_ = store.UpsertResourceBinding(ctx, state.ResourceBinding{
 				Tenant:      tenant,
 				Workspace:   workspace,
 				Kind:        "block-storage",
@@ -107,7 +111,11 @@ func getBlockStorage(provider ComputeStorageProvider, store *state.Store) http.H
 		if !ok {
 			return
 		}
-		volume, err := provider.GetBlockStorage(r.Context(), name)
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
+			return
+		}
+		volume, err := provider.GetBlockStorage(ctx, name)
 		if err != nil {
 			respondFromError(w, err, r.URL.Path)
 			return
@@ -116,7 +124,7 @@ func getBlockStorage(provider ComputeStorageProvider, store *state.Store) http.H
 			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "block storage not found", r.URL.Path)
 			return
 		}
-		if err := store.UpsertResourceBinding(r.Context(), state.ResourceBinding{
+		if err := store.UpsertResourceBinding(ctx, state.ResourceBinding{
 			Tenant:      tenant,
 			Workspace:   workspace,
 			Kind:        "block-storage",
@@ -142,6 +150,10 @@ func putBlockStorage(provider ComputeStorageProvider, store *state.Store) http.H
 		if !ok {
 			return
 		}
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
+			return
+		}
 		var reqBody blockStorageUpsertRequest
 		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "invalid json body", r.URL.Path)
@@ -161,7 +173,7 @@ func putBlockStorage(provider ComputeStorageProvider, store *state.Store) http.H
 		if reqBody.Spec.AttachedTo != nil {
 			attachTo = resourceNameFromRef(reqBody.Spec.AttachedTo.Resource)
 		}
-		volume, created, actionID, err := provider.CreateOrUpdateBlockStorage(r.Context(), hetzner.BlockStorageCreateRequest{
+		volume, created, actionID, err := provider.CreateOrUpdateBlockStorage(ctx, hetzner.BlockStorageCreateRequest{
 			Name:     name,
 			SizeGB:   providerSizeGB,
 			Region:   reqBody.Metadata.Region,
@@ -171,7 +183,7 @@ func putBlockStorage(provider ComputeStorageProvider, store *state.Store) http.H
 			respondFromError(w, err, r.URL.Path)
 			return
 		}
-		if err := store.UpsertResourceBinding(r.Context(), state.ResourceBinding{
+		if err := store.UpsertResourceBinding(ctx, state.ResourceBinding{
 			Tenant:      tenant,
 			Workspace:   workspace,
 			Kind:        "block-storage",
@@ -183,7 +195,7 @@ func putBlockStorage(provider ComputeStorageProvider, store *state.Store) http.H
 			return
 		}
 		if actionID != "" {
-			if err := store.CreateOperation(r.Context(), state.OperationRecord{
+			if err := store.CreateOperation(ctx, state.OperationRecord{
 				OperationID:      operationID("block-storage-upsert", name),
 				SecaRef:          blockStorageRef(tenant, workspace, name),
 				ProviderActionID: actionID,
@@ -214,7 +226,11 @@ func deleteBlockStorage(provider ComputeStorageProvider, store *state.Store) htt
 		if !ok {
 			return
 		}
-		deleted, err := provider.DeleteBlockStorage(r.Context(), name)
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
+			return
+		}
+		deleted, err := provider.DeleteBlockStorage(ctx, name)
 		if err != nil {
 			respondFromError(w, err, r.URL.Path)
 			return
@@ -223,7 +239,7 @@ func deleteBlockStorage(provider ComputeStorageProvider, store *state.Store) htt
 			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "block storage not found", r.URL.Path)
 			return
 		}
-		_ = store.DeleteResourceBinding(r.Context(), blockStorageRef(tenant, workspace, name))
+		_ = store.DeleteResourceBinding(ctx, blockStorageRef(tenant, workspace, name))
 		runtimeResourceState.deleteBlockStorageSpec(blockStorageRef(tenant, workspace, name))
 		respondJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 	}
@@ -239,6 +255,10 @@ func attachBlockStorage(provider ComputeStorageProvider, store *state.Store) htt
 		if !ok {
 			return
 		}
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
+			return
+		}
 		var reqBody attachBlockStorageRequest
 		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "invalid json body", r.URL.Path)
@@ -249,7 +269,7 @@ func attachBlockStorage(provider ComputeStorageProvider, store *state.Store) htt
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "instanceRef.resource is required", r.URL.Path)
 			return
 		}
-		found, actionID, err := provider.AttachBlockStorage(r.Context(), name, instanceName)
+		found, actionID, err := provider.AttachBlockStorage(ctx, name, instanceName)
 		if err != nil {
 			respondFromError(w, err, r.URL.Path)
 			return
@@ -258,7 +278,7 @@ func attachBlockStorage(provider ComputeStorageProvider, store *state.Store) htt
 			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "block storage not found", r.URL.Path)
 			return
 		}
-		if err := store.CreateOperation(r.Context(), state.OperationRecord{
+		if err := store.CreateOperation(ctx, state.OperationRecord{
 			OperationID:      operationID("block-storage-attach", name),
 			SecaRef:          blockStorageRef(tenant, workspace, name),
 			ProviderActionID: actionID,
@@ -281,7 +301,11 @@ func detachBlockStorage(provider ComputeStorageProvider, store *state.Store) htt
 		if !ok {
 			return
 		}
-		found, actionID, err := provider.DetachBlockStorage(r.Context(), name)
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
+			return
+		}
+		found, actionID, err := provider.DetachBlockStorage(ctx, name)
 		if err != nil {
 			respondFromError(w, err, r.URL.Path)
 			return
@@ -290,7 +314,7 @@ func detachBlockStorage(provider ComputeStorageProvider, store *state.Store) htt
 			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "block storage not found", r.URL.Path)
 			return
 		}
-		if err := store.CreateOperation(r.Context(), state.OperationRecord{
+		if err := store.CreateOperation(ctx, state.OperationRecord{
 			OperationID:      operationID("block-storage-detach", name),
 			SecaRef:          blockStorageRef(tenant, workspace, name),
 			ProviderActionID: actionID,

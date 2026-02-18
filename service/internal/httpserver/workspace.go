@@ -116,8 +116,10 @@ func putWorkspace(store *state.Store) http.HandlerFunc {
 		statusState := "creating"
 		code := http.StatusCreated
 		if existing != nil {
-			statusState = "updating"
 			code = http.StatusOK
+			if current, ok := existing.Status["state"].(string); ok && strings.TrimSpace(current) != "" {
+				statusState = current
+			}
 		}
 		desired := state.WorkspaceResource{
 			Tenant: tenant,

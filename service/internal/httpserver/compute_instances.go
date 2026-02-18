@@ -60,8 +60,12 @@ func listInstances(provider ComputeStorageProvider, store *state.Store) http.Han
 		if !ok {
 			return
 		}
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
+			return
+		}
 
-		instances, err := provider.ListInstances(r.Context())
+		instances, err := provider.ListInstances(ctx)
 		if err != nil {
 			respondFromError(w, err, r.URL.Path)
 			return
@@ -75,7 +79,7 @@ func listInstances(provider ComputeStorageProvider, store *state.Store) http.Han
 			} else {
 				items = append(items, toInstanceResource(tenant, workspace, instance, http.MethodGet, "active", nil))
 			}
-			_ = store.UpsertResourceBinding(r.Context(), state.ResourceBinding{
+			_ = store.UpsertResourceBinding(ctx, state.ResourceBinding{
 				Tenant:      tenant,
 				Workspace:   workspace,
 				Kind:        "instance",
@@ -113,7 +117,11 @@ func getInstance(provider ComputeStorageProvider, store *state.Store) http.Handl
 		if !ok {
 			return
 		}
-		instance, err := provider.GetInstance(r.Context(), name)
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
+			return
+		}
+		instance, err := provider.GetInstance(ctx, name)
 		if err != nil {
 			respondFromError(w, err, r.URL.Path)
 			return
@@ -122,7 +130,7 @@ func getInstance(provider ComputeStorageProvider, store *state.Store) http.Handl
 			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "instance not found", r.URL.Path)
 			return
 		}
-		if err := store.UpsertResourceBinding(r.Context(), state.ResourceBinding{
+		if err := store.UpsertResourceBinding(ctx, state.ResourceBinding{
 			Tenant:      tenant,
 			Workspace:   workspace,
 			Kind:        "instance",
@@ -148,6 +156,10 @@ func putInstance(provider ComputeStorageProvider, store *state.Store) http.Handl
 		if !ok {
 			return
 		}
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
+			return
+		}
 		var reqBody instanceUpsertRequest
 		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "invalid json body", r.URL.Path)
@@ -169,7 +181,7 @@ func putInstance(provider ComputeStorageProvider, store *state.Store) http.Handl
 			imageName = "ubuntu-24.04"
 		}
 
-		instance, created, actionID, err := provider.CreateOrUpdateInstance(r.Context(), hetzner.InstanceCreateRequest{
+		instance, created, actionID, err := provider.CreateOrUpdateInstance(ctx, hetzner.InstanceCreateRequest{
 			Name:      name,
 			SKUName:   skuName,
 			ImageName: imageName,
@@ -180,7 +192,7 @@ func putInstance(provider ComputeStorageProvider, store *state.Store) http.Handl
 			respondFromError(w, err, r.URL.Path)
 			return
 		}
-		if err := store.UpsertResourceBinding(r.Context(), state.ResourceBinding{
+		if err := store.UpsertResourceBinding(ctx, state.ResourceBinding{
 			Tenant:      tenant,
 			Workspace:   workspace,
 			Kind:        "instance",
@@ -192,7 +204,7 @@ func putInstance(provider ComputeStorageProvider, store *state.Store) http.Handl
 			return
 		}
 		if actionID != "" {
-			if err := store.CreateOperation(r.Context(), state.OperationRecord{
+			if err := store.CreateOperation(ctx, state.OperationRecord{
 				OperationID:      operationID("instance-upsert", name),
 				SecaRef:          computeInstanceRef(tenant, workspace, name),
 				ProviderActionID: actionID,
@@ -228,7 +240,11 @@ func deleteInstance(provider ComputeStorageProvider, store *state.Store) http.Ha
 		if !ok {
 			return
 		}
-		deleted, actionID, err := provider.DeleteInstance(r.Context(), name)
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
+			return
+		}
+		deleted, actionID, err := provider.DeleteInstance(ctx, name)
 		if err != nil {
 			respondFromError(w, err, r.URL.Path)
 			return
@@ -237,10 +253,10 @@ func deleteInstance(provider ComputeStorageProvider, store *state.Store) http.Ha
 			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "instance not found", r.URL.Path)
 			return
 		}
-		_ = store.DeleteResourceBinding(r.Context(), computeInstanceRef(tenant, workspace, name))
+		_ = store.DeleteResourceBinding(ctx, computeInstanceRef(tenant, workspace, name))
 		runtimeResourceState.deleteInstanceSpec(computeInstanceRef(tenant, workspace, name))
 		if actionID != "" {
-			_ = store.CreateOperation(r.Context(), state.OperationRecord{
+			_ = store.CreateOperation(ctx, state.OperationRecord{
 				OperationID:      operationID("instance-delete", name),
 				SecaRef:          computeInstanceRef(tenant, workspace, name),
 				ProviderActionID: actionID,
@@ -273,7 +289,11 @@ func instanceAction(action func(ctx context.Context, name string) (bool, string,
 		if !ok {
 			return
 		}
-		found, actionID, err := action(r.Context(), name)
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
+			return
+		}
+		found, actionID, err := action(ctx, name)
 		if err != nil {
 			respondFromError(w, err, r.URL.Path)
 			return
@@ -282,7 +302,7 @@ func instanceAction(action func(ctx context.Context, name string) (bool, string,
 			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "instance not found", r.URL.Path)
 			return
 		}
-		if err := store.CreateOperation(r.Context(), state.OperationRecord{
+		if err := store.CreateOperation(ctx, state.OperationRecord{
 			OperationID:      operationID(phase, name),
 			SecaRef:          computeInstanceRef(tenant, workspace, name),
 			ProviderActionID: actionID,

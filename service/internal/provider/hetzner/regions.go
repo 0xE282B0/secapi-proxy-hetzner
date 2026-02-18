@@ -60,8 +60,11 @@ func NewRegionService(cfg config.Config) *RegionService {
 }
 
 func (s *RegionService) listServerTypes(ctx context.Context) ([]*hcloud.ServerType, error) {
+	if _, ok := workspaceCredentialFromContext(ctx); ok {
+		return s.clientFor(ctx).ServerType.All(ctx)
+	}
 	if s.availCacheTTL <= 0 {
-		return s.client.ServerType.All(ctx)
+		return s.clientFor(ctx).ServerType.All(ctx)
 	}
 
 	now := time.Now()
@@ -73,7 +76,7 @@ func (s *RegionService) listServerTypes(ctx context.Context) ([]*hcloud.ServerTy
 	}
 	s.serverTypesCacheMu.RUnlock()
 
-	serverTypes, err := s.client.ServerType.All(ctx)
+	serverTypes, err := s.clientFor(ctx).ServerType.All(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -101,11 +104,11 @@ func (s *RegionService) ListRegions(ctx context.Context) ([]Region, error) {
 		return nil, ErrNotConfigured
 	}
 
-	locations, err := s.client.Location.All(ctx)
+	locations, err := s.clientFor(ctx).Location.All(ctx)
 	if err != nil {
 		return nil, err
 	}
-	dataCenters, err := s.client.Datacenter.All(ctx)
+	dataCenters, err := s.clientFor(ctx).Datacenter.All(ctx)
 	if err != nil {
 		return nil, err
 	}

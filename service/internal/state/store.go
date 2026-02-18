@@ -56,6 +56,15 @@ type WorkspaceResource struct {
 	UpdatedAt       time.Time
 }
 
+type WorkspaceProviderCredential struct {
+	Tenant      string
+	Workspace   string
+	Provider    string
+	ProjectRef  string
+	APIEndpoint string
+	APIToken    string
+}
+
 func New(ctx context.Context, databaseURL string) (*Store, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -359,6 +368,54 @@ func (s *Store) SoftDeleteWorkspace(ctx context.Context, tenant, name string) (b
 	return count > 0, nil
 }
 
+func (s *Store) UpsertWorkspaceProviderCredential(ctx context.Context, cred WorkspaceProviderCredential) (*WorkspaceProviderCredential, error) {
+	var projectRef pgtype.Text
+	if cred.ProjectRef != "" {
+		projectRef = pgtype.Text{String: cred.ProjectRef, Valid: true}
+	}
+	var apiEndpoint pgtype.Text
+	if cred.APIEndpoint != "" {
+		apiEndpoint = pgtype.Text{String: cred.APIEndpoint, Valid: true}
+	}
+	row, err := s.queries.UpsertWorkspaceProviderCredential(ctx, dbsqlc.UpsertWorkspaceProviderCredentialParams{
+		Tenant:            cred.Tenant,
+		Workspace:         cred.Workspace,
+		Provider:          cred.Provider,
+		ProjectRef:        projectRef,
+		ApiEndpoint:       apiEndpoint,
+		ApiTokenEncrypted: cred.APIToken,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("upsert workspace provider credential: %w", err)
+	}
+	out := workspaceProviderCredentialFromRow(row)
+	return &out, nil
+}
+
+func (s *Store) GetWorkspaceProviderCredential(ctx context.Context, tenant, workspace, provider string) (*WorkspaceProviderCredential, error) {
+	row, err := s.queries.GetWorkspaceProviderCredential(ctx, dbsqlc.GetWorkspaceProviderCredentialParams{
+		Tenant: tenant, Workspace: workspace, Provider: provider,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get workspace provider credential: %w", err)
+	}
+	out := workspaceProviderCredentialFromRow(row)
+	return &out, nil
+}
+
+func (s *Store) SoftDeleteWorkspaceProviderCredential(ctx context.Context, tenant, workspace, provider string) (bool, error) {
+	count, err := s.queries.SoftDeleteWorkspaceProviderCredential(ctx, dbsqlc.SoftDeleteWorkspaceProviderCredentialParams{
+		Tenant: tenant, Workspace: workspace, Provider: provider,
+	})
+	if err != nil {
+		return false, fmt.Errorf("soft delete workspace provider credential: %w", err)
+	}
+	return count > 0, nil
+}
+
 func authResourceFromRoleRow(row dbsqlc.AuthRole) (AuthResource, error) {
 	labels := map[string]string{}
 	if err := json.Unmarshal(row.Labels, &labels); err != nil {
@@ -429,4 +486,20 @@ func workspaceResourceFromRow(row dbsqlc.Workspace) (WorkspaceResource, error) {
 		CreatedAt:       row.CreatedAt.Time.UTC(),
 		UpdatedAt:       row.UpdatedAt.Time.UTC(),
 	}, nil
+}
+
+func workspaceProviderCredentialFromRow(row dbsqlc.WorkspaceProviderCredential) WorkspaceProviderCredential {
+	out := WorkspaceProviderCredential{
+		Tenant:    row.Tenant,
+		Workspace: row.Workspace,
+		Provider:  row.Provider,
+		APIToken:  row.ApiTokenEncrypted, // TODO: Replace with encrypted-at-rest secret storage + decryption.
+	}
+	if row.ProjectRef.Valid {
+		out.ProjectRef = row.ProjectRef.String
+	}
+	if row.ApiEndpoint.Valid {
+		out.APIEndpoint = row.ApiEndpoint.String
+	}
+	return out
 }

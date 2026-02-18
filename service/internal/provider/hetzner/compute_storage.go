@@ -48,7 +48,7 @@ func (s *RegionService) ListInstances(ctx context.Context) ([]Instance, error) {
 	if !s.configured {
 		return nil, ErrNotConfigured
 	}
-	servers, err := s.client.Server.All(ctx)
+	servers, err := s.clientFor(ctx).Server.All(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func (s *RegionService) GetInstance(ctx context.Context, name string) (*Instance
 	if !s.configured {
 		return nil, ErrNotConfigured
 	}
-	server, _, err := s.client.Server.GetByName(ctx, name)
+	server, _, err := s.clientFor(ctx).Server.GetByName(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func (s *RegionService) CreateOrUpdateInstance(ctx context.Context, req Instance
 		return nil, false, "", ErrNotConfigured
 	}
 
-	current, _, err := s.client.Server.GetByName(ctx, req.Name)
+	current, _, err := s.clientFor(ctx).Server.GetByName(ctx, req.Name)
 	if err != nil {
 		return nil, false, "", err
 	}
@@ -91,7 +91,7 @@ func (s *RegionService) CreateOrUpdateInstance(ctx context.Context, req Instance
 		return &instance, false, "", nil
 	}
 
-	serverType, _, err := s.client.ServerType.GetByName(ctx, req.SKUName)
+	serverType, _, err := s.clientFor(ctx).ServerType.GetByName(ctx, req.SKUName)
 	if err != nil {
 		return nil, false, "", err
 	}
@@ -128,7 +128,7 @@ func (s *RegionService) CreateOrUpdateInstance(ctx context.Context, req Instance
 		},
 	}
 	if req.Region != "" {
-		location, _, locErr := s.client.Location.GetByName(ctx, req.Region)
+		location, _, locErr := s.clientFor(ctx).Location.GetByName(ctx, req.Region)
 		if locErr != nil {
 			return nil, false, "", locErr
 		}
@@ -138,7 +138,7 @@ func (s *RegionService) CreateOrUpdateInstance(ctx context.Context, req Instance
 		createOpts.Location = location
 	}
 
-	result, _, err := s.client.Server.Create(ctx, createOpts)
+	result, _, err := s.clientFor(ctx).Server.Create(ctx, createOpts)
 	if err != nil {
 		if s.conformanceMode && req.Region != "" && isUnsupportedLocationForServerTypeError(err) {
 			// TODO: Remove this conformance-only fallback that silently changes SKU.
@@ -156,7 +156,7 @@ func (s *RegionService) CreateOrUpdateInstance(ctx context.Context, req Instance
 				case hcloud.ErrorCodeResourceUnavailable, hcloud.ErrorCodeNoSpaceLeftInLocation, hcloud.ErrorCodeInvalidInput:
 					retryOpts := createOpts
 					retryOpts.Location = nil
-					retryResult, _, retryErr := s.client.Server.Create(ctx, retryOpts)
+					retryResult, _, retryErr := s.clientFor(ctx).Server.Create(ctx, retryOpts)
 					if retryErr == nil {
 						actionID := ""
 						if retryResult.Action != nil {
@@ -199,7 +199,7 @@ func (s *RegionService) tryCreateWithRegionFallbackTypes(ctx context.Context, cr
 		}
 		opts := createOpts
 		opts.ServerType = candidate
-		result, _, createErr := s.client.Server.Create(ctx, opts)
+		result, _, createErr := s.clientFor(ctx).Server.Create(ctx, opts)
 		if createErr != nil {
 			if isUnsupportedLocationForServerTypeError(createErr) {
 				continue
@@ -310,7 +310,7 @@ func isUnsupportedLocationForServerTypeError(err error) bool {
 func (s *RegionService) resolveImageForArchitecture(ctx context.Context, imageName string, arch hcloud.Architecture) (*hcloud.Image, error) {
 	// Fast path when the named image already matches architecture.
 	if imageName != "" {
-		image, _, err := s.client.Image.GetByName(ctx, imageName)
+		image, _, err := s.clientFor(ctx).Image.GetByName(ctx, imageName)
 		if err != nil {
 			return nil, err
 		}
@@ -320,7 +320,7 @@ func (s *RegionService) resolveImageForArchitecture(ctx context.Context, imageNa
 	}
 
 	// Fallback: select a system image matching both name and architecture.
-	images, err := s.client.Image.AllWithOpts(ctx, hcloud.ImageListOpts{
+	images, err := s.clientFor(ctx).Image.AllWithOpts(ctx, hcloud.ImageListOpts{
 		Type: []hcloud.ImageType{hcloud.ImageTypeSystem},
 	})
 	if err != nil {
@@ -359,14 +359,14 @@ func (s *RegionService) DeleteInstance(ctx context.Context, name string) (bool, 
 	if !s.configured {
 		return false, "", ErrNotConfigured
 	}
-	server, _, err := s.client.Server.GetByName(ctx, name)
+	server, _, err := s.clientFor(ctx).Server.GetByName(ctx, name)
 	if err != nil {
 		return false, "", err
 	}
 	if server == nil {
 		return false, "", nil
 	}
-	result, _, err := s.client.Server.DeleteWithResult(ctx, server)
+	result, _, err := s.clientFor(ctx).Server.DeleteWithResult(ctx, server)
 	if err != nil {
 		return false, "", err
 	}
@@ -391,7 +391,7 @@ func (s *RegionService) StartInstance(ctx context.Context, name string) (bool, s
 		_ = s.ensureServerHasNetworkInterface(ctx, server)
 		action, _, err = s.powerOnWithRetry(ctx, server)
 	} else {
-		action, _, err = s.client.Server.Poweron(ctx, server)
+		action, _, err = s.clientFor(ctx).Server.Poweron(ctx, server)
 	}
 	if err != nil {
 		if s.conformanceMode && needsNetworkInterface(err) {
@@ -433,7 +433,7 @@ func (s *RegionService) powerOnWithRetry(ctx context.Context, server *hcloud.Ser
 
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		action, resp, err := s.client.Server.Poweron(ctx, server)
+		action, resp, err := s.clientFor(ctx).Server.Poweron(ctx, server)
 		if err == nil {
 			return action, resp, nil
 		}
@@ -456,7 +456,7 @@ func (s *RegionService) StopInstance(ctx context.Context, name string) (bool, st
 	if server == nil {
 		return false, "", nil
 	}
-	action, _, err := s.client.Server.Poweroff(ctx, server)
+	action, _, err := s.clientFor(ctx).Server.Poweroff(ctx, server)
 	if err != nil {
 		return false, "", err
 	}
@@ -471,7 +471,7 @@ func (s *RegionService) RestartInstance(ctx context.Context, name string) (bool,
 	if server == nil {
 		return false, "", nil
 	}
-	action, _, err := s.client.Server.Reboot(ctx, server)
+	action, _, err := s.clientFor(ctx).Server.Reboot(ctx, server)
 	if err != nil {
 		return false, "", err
 	}
@@ -482,7 +482,7 @@ func (s *RegionService) ListBlockStorages(ctx context.Context) ([]BlockStorage, 
 	if !s.configured {
 		return nil, ErrNotConfigured
 	}
-	volumes, err := s.client.Volume.All(ctx)
+	volumes, err := s.clientFor(ctx).Volume.All(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -500,7 +500,7 @@ func (s *RegionService) GetBlockStorage(ctx context.Context, name string) (*Bloc
 	if !s.configured {
 		return nil, ErrNotConfigured
 	}
-	volume, _, err := s.client.Volume.GetByName(ctx, name)
+	volume, _, err := s.clientFor(ctx).Volume.GetByName(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -515,7 +515,7 @@ func (s *RegionService) CreateOrUpdateBlockStorage(ctx context.Context, req Bloc
 	if !s.configured {
 		return nil, false, "", ErrNotConfigured
 	}
-	current, _, err := s.client.Volume.GetByName(ctx, req.Name)
+	current, _, err := s.clientFor(ctx).Volume.GetByName(ctx, req.Name)
 	if err != nil {
 		return nil, false, "", err
 	}
@@ -529,7 +529,7 @@ func (s *RegionService) CreateOrUpdateBlockStorage(ctx context.Context, req Bloc
 		Size: req.SizeGB,
 	}
 	if req.AttachTo != "" {
-		server, _, getErr := s.client.Server.GetByName(ctx, req.AttachTo)
+		server, _, getErr := s.clientFor(ctx).Server.GetByName(ctx, req.AttachTo)
 		if getErr != nil {
 			return nil, false, "", getErr
 		}
@@ -538,7 +538,7 @@ func (s *RegionService) CreateOrUpdateBlockStorage(ctx context.Context, req Bloc
 		}
 		createOpts.Server = server
 	} else if !s.conformanceMode {
-		location, _, locErr := s.client.Location.GetByName(ctx, req.Region)
+		location, _, locErr := s.clientFor(ctx).Location.GetByName(ctx, req.Region)
 		if locErr != nil {
 			return nil, false, "", locErr
 		}
@@ -566,7 +566,7 @@ func (s *RegionService) CreateOrUpdateBlockStorage(ctx context.Context, req Bloc
 		for _, location := range locations {
 			opts := createOpts
 			opts.Location = location
-			result, _, createErr = s.client.Volume.Create(ctx, opts)
+			result, _, createErr = s.clientFor(ctx).Volume.Create(ctx, opts)
 			if createErr == nil {
 				createdWith = location
 				break
@@ -598,7 +598,7 @@ func (s *RegionService) CreateOrUpdateBlockStorage(ctx context.Context, req Bloc
 		block := blockStorageFromVolume(result.Volume)
 		return &block, true, actionID, nil
 	}
-	result, _, err := s.client.Volume.Create(ctx, createOpts)
+	result, _, err := s.clientFor(ctx).Volume.Create(ctx, createOpts)
 	if err != nil {
 		return nil, false, "", err
 	}
@@ -620,7 +620,7 @@ func (s *RegionService) locationCandidates(ctx context.Context, preferred string
 	preferred = strings.TrimSpace(preferred)
 
 	if preferred != "" {
-		location, _, err := s.client.Location.GetByName(ctx, preferred)
+		location, _, err := s.clientFor(ctx).Location.GetByName(ctx, preferred)
 		if err != nil {
 			return nil, err
 		}
@@ -630,7 +630,7 @@ func (s *RegionService) locationCandidates(ctx context.Context, preferred string
 		}
 	}
 
-	locations, err := s.client.Location.All(ctx)
+	locations, err := s.clientFor(ctx).Location.All(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -651,14 +651,14 @@ func (s *RegionService) DeleteBlockStorage(ctx context.Context, name string) (bo
 	if !s.configured {
 		return false, ErrNotConfigured
 	}
-	volume, _, err := s.client.Volume.GetByName(ctx, name)
+	volume, _, err := s.clientFor(ctx).Volume.GetByName(ctx, name)
 	if err != nil {
 		return false, err
 	}
 	if volume == nil {
 		return false, nil
 	}
-	_, err = s.client.Volume.Delete(ctx, volume)
+	_, err = s.clientFor(ctx).Volume.Delete(ctx, volume)
 	if err != nil {
 		return false, err
 	}
@@ -669,21 +669,21 @@ func (s *RegionService) AttachBlockStorage(ctx context.Context, name, instanceNa
 	if !s.configured {
 		return false, "", ErrNotConfigured
 	}
-	volume, _, err := s.client.Volume.GetByName(ctx, name)
+	volume, _, err := s.clientFor(ctx).Volume.GetByName(ctx, name)
 	if err != nil {
 		return false, "", err
 	}
 	if volume == nil {
 		return false, "", nil
 	}
-	server, _, err := s.client.Server.GetByName(ctx, instanceName)
+	server, _, err := s.clientFor(ctx).Server.GetByName(ctx, instanceName)
 	if err != nil {
 		return false, "", err
 	}
 	if server == nil {
 		return false, "", notFoundError(fmt.Sprintf("instance %q not found", instanceName))
 	}
-	action, _, err := s.client.Volume.Attach(ctx, volume, server)
+	action, _, err := s.clientFor(ctx).Volume.Attach(ctx, volume, server)
 	if err != nil {
 		return false, "", err
 	}
@@ -694,14 +694,14 @@ func (s *RegionService) DetachBlockStorage(ctx context.Context, name string) (bo
 	if !s.configured {
 		return false, "", ErrNotConfigured
 	}
-	volume, _, err := s.client.Volume.GetByName(ctx, name)
+	volume, _, err := s.clientFor(ctx).Volume.GetByName(ctx, name)
 	if err != nil {
 		return false, "", err
 	}
 	if volume == nil {
 		return false, "", nil
 	}
-	action, _, err := s.client.Volume.Detach(ctx, volume)
+	action, _, err := s.clientFor(ctx).Volume.Detach(ctx, volume)
 	if err != nil {
 		return false, "", err
 	}
@@ -712,7 +712,7 @@ func (s *RegionService) getServerByName(ctx context.Context, name string) (*hclo
 	if !s.configured {
 		return nil, ErrNotConfigured
 	}
-	server, _, err := s.client.Server.GetByName(ctx, name)
+	server, _, err := s.clientFor(ctx).Server.GetByName(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -783,7 +783,7 @@ func (s *RegionService) ensureServerHasNetworkInterface(ctx context.Context, ser
 	}
 
 	networkName := fmt.Sprintf("secapi-proxy-bootstrap-%s", strings.ToLower(string(zone)))
-	network, _, err := s.client.Network.GetByName(ctx, networkName)
+	network, _, err := s.clientFor(ctx).Network.GetByName(ctx, networkName)
 	if err != nil {
 		return err
 	}
@@ -796,7 +796,7 @@ func (s *RegionService) ensureServerHasNetworkInterface(ctx context.Context, ser
 		if parseErr != nil {
 			return parseErr
 		}
-		network, _, err = s.client.Network.Create(ctx, hcloud.NetworkCreateOpts{
+		network, _, err = s.clientFor(ctx).Network.Create(ctx, hcloud.NetworkCreateOpts{
 			Name:    networkName,
 			IPRange: ipRange,
 			Subnets: []hcloud.NetworkSubnet{
@@ -811,7 +811,7 @@ func (s *RegionService) ensureServerHasNetworkInterface(ctx context.Context, ser
 			return err
 		}
 	} else if !hasCloudSubnetInZone(network, zone) {
-		addAction, _, addErr := s.client.Network.AddSubnet(ctx, network, hcloud.NetworkAddSubnetOpts{
+		addAction, _, addErr := s.clientFor(ctx).Network.AddSubnet(ctx, network, hcloud.NetworkAddSubnetOpts{
 			Subnet: hcloud.NetworkSubnet{
 				Type:        hcloud.NetworkSubnetTypeCloud,
 				NetworkZone: zone,
@@ -822,13 +822,13 @@ func (s *RegionService) ensureServerHasNetworkInterface(ctx context.Context, ser
 			return addErr
 		}
 		if addAction != nil {
-			if waitErr := s.client.Action.WaitFor(ctx, addAction); waitErr != nil {
+			if waitErr := s.clientFor(ctx).Action.WaitFor(ctx, addAction); waitErr != nil {
 				return waitErr
 			}
 		}
 	}
 
-	action, _, err := s.client.Server.AttachToNetwork(ctx, server, hcloud.ServerAttachToNetworkOpts{Network: network})
+	action, _, err := s.clientFor(ctx).Server.AttachToNetwork(ctx, server, hcloud.ServerAttachToNetworkOpts{Network: network})
 	if err != nil {
 		var apiErr hcloud.Error
 		if errors.As(err, &apiErr) && apiErr.Code == hcloud.ErrorCodeServerAlreadyAttached {
@@ -837,7 +837,7 @@ func (s *RegionService) ensureServerHasNetworkInterface(ctx context.Context, ser
 		return err
 	}
 	if action != nil {
-		if waitErr := s.client.Action.WaitFor(ctx, action); waitErr != nil {
+		if waitErr := s.clientFor(ctx).Action.WaitFor(ctx, action); waitErr != nil {
 			return waitErr
 		}
 	}

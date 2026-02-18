@@ -101,7 +101,7 @@ func (s *RegionService) ListCatalogImages(ctx context.Context) ([]CatalogImage, 
 	if !s.configured {
 		return nil, ErrNotConfigured
 	}
-	images, err := s.client.Image.AllWithOpts(ctx, hcloud.ImageListOpts{IncludeDeprecated: true})
+	images, err := s.clientFor(ctx).Image.AllWithOpts(ctx, hcloud.ImageListOpts{IncludeDeprecated: true})
 	if err != nil {
 		return nil, err
 	}
