@@ -129,6 +129,14 @@ Use the Make targets:
 
 ```bash
 make conformance-smoke
+make conformance-region
+make conformance-auth
+make conformance-workspace
+make conformance-compute
+make conformance-storage
+make conformance-network
+make conformance-foundation
+make conformance-foundation-core
 make conformance-full
 ```
 

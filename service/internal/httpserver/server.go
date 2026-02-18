@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -138,6 +139,39 @@ type refObject struct {
 	Resource string `json:"resource"`
 }
 
+func (r refObject) MarshalJSON() ([]byte, error) {
+	// Conformance expects references serialized as the compact string form.
+	return json.Marshal(r.Resource)
+}
+
+func (r *refObject) UnmarshalJSON(data []byte) error {
+	raw := strings.TrimSpace(string(data))
+	if raw == "" || raw == "null" {
+		r.Resource = ""
+		return nil
+	}
+
+	// Accept union form as a plain reference string, e.g. "skus/cx23".
+	if strings.HasPrefix(raw, "\"") {
+		var ref string
+		if err := json.Unmarshal(data, &ref); err != nil {
+			return err
+		}
+		r.Resource = ref
+		return nil
+	}
+
+	// Accept object form, e.g. {"resource":"skus/cx23"}.
+	var obj struct {
+		Resource string `json:"resource"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return fmt.Errorf("invalid reference payload: %w", err)
+	}
+	r.Resource = obj.Resource
+	return nil
+}
+
 type wellknownResponse struct {
 	Version   string              `json:"version"`
 	Endpoints []wellknownEndpoint `json:"endpoints"`
@@ -150,11 +184,19 @@ type wellknownEndpoint struct {
 
 func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, catalogProvider CatalogProvider, phase2Provider ComputeStorageProvider) *http.Server {
 	mux := http.NewServeMux()
+	workspaceState := newWorkspaceStore()
+	authState := newAuthStore()
 	mux.HandleFunc("/healthz", healthz)
 	mux.HandleFunc("/readyz", readyz(store))
 	mux.HandleFunc("/.wellknown/secapi", wellknown(cfg))
 	mux.HandleFunc("/v1/regions", listRegions(regionProvider))
 	mux.HandleFunc("/v1/regions/{name}", getRegion(regionProvider))
+	mux.HandleFunc("/v1/tenants/{tenant}/roles", listRoles(authState))
+	mux.HandleFunc("/v1/tenants/{tenant}/roles/{name}", roleCRUD(authState))
+	mux.HandleFunc("/v1/tenants/{tenant}/role-assignments", listRoleAssignments(authState))
+	mux.HandleFunc("/v1/tenants/{tenant}/role-assignments/{name}", roleAssignmentCRUD(authState))
+	mux.HandleFunc("/workspace/v1/tenants/{tenant}/workspaces", listWorkspaces(workspaceState))
+	mux.HandleFunc("/workspace/v1/tenants/{tenant}/workspaces/{name}", workspaceCRUD(workspaceState))
 	mux.HandleFunc("/compute/v1/tenants/{tenant}/skus", listComputeSKUs(catalogProvider))
 	mux.HandleFunc("/compute/v1/tenants/{tenant}/skus/{name}", getComputeSKU(catalogProvider))
 	mux.HandleFunc("/storage/v1/tenants/{tenant}/skus", listStorageSKUs())
@@ -228,7 +270,7 @@ func listRegions(regionProvider RegionProvider) http.HandlerFunc {
 		for _, region := range regions {
 			items = append(items, toRegionResource(region, now, http.MethodGet))
 		}
-		respondJSON(w, http.StatusOK, regionIterator{Items: items, Metadata: responseMetaObject{Provider: "seca.region/v1", Resource: "regions", Verb: "list"}})
+		respondJSON(w, http.StatusOK, regionIterator{Items: items, Metadata: responseMetaObject{Provider: "seca.region/v1", Resource: "regions", Verb: http.MethodGet}})
 	}
 }
 
@@ -278,7 +320,7 @@ func listComputeSKUs(catalogProvider CatalogProvider) http.HandlerFunc {
 		for _, sku := range skus {
 			items = append(items, computeSKUResource{Metadata: resourceMetadata{Name: sku.Name, Provider: "seca.compute/v1", Resource: "tenants/" + tenant + "/skus/" + sku.Name, Verb: http.MethodGet, CreatedAt: now, LastModifiedAt: now, ResourceVersion: 1, APIVersion: "v1", Kind: "instance-sku", Ref: "seca.compute/v1/tenants/" + tenant + "/skus/" + sku.Name, Tenant: tenant, Region: "global"}, Spec: computeSKUSpec{VCPU: sku.VCPU, RAM: sku.RAMGiB}})
 		}
-		respondJSON(w, http.StatusOK, computeSKUIterator{Items: items, Metadata: responseMetaObject{Provider: "seca.compute/v1", Resource: "tenants/" + tenant + "/skus", Verb: "list"}})
+		respondJSON(w, http.StatusOK, computeSKUIterator{Items: items, Metadata: responseMetaObject{Provider: "seca.compute/v1", Resource: "tenants/" + tenant + "/skus", Verb: http.MethodGet}})
 	}
 }
 
@@ -341,7 +383,7 @@ func listStorageSKUs() http.HandlerFunc {
 		}
 		respondJSON(w, http.StatusOK, computeSKUIterator{
 			Items:    items,
-			Metadata: responseMetaObject{Provider: "seca.storage/v1", Resource: "tenants/" + tenant + "/skus", Verb: "list"},
+			Metadata: responseMetaObject{Provider: "seca.storage/v1", Resource: "tenants/" + tenant + "/skus", Verb: http.MethodGet},
 		})
 	}
 }
@@ -416,7 +458,7 @@ func listNetworkSKUs() http.HandlerFunc {
 		}
 		respondJSON(w, http.StatusOK, computeSKUIterator{
 			Items:    items,
-			Metadata: responseMetaObject{Provider: "seca.network/v1", Resource: "tenants/" + tenant + "/skus", Verb: "list"},
+			Metadata: responseMetaObject{Provider: "seca.network/v1", Resource: "tenants/" + tenant + "/skus", Verb: http.MethodGet},
 		})
 	}
 }
@@ -479,7 +521,7 @@ func listImages(catalogProvider CatalogProvider) http.HandlerFunc {
 		for _, img := range images {
 			items = append(items, imageResource{Metadata: resourceMetadata{Name: img.Name, Provider: "seca.storage/v1", Resource: "tenants/" + tenant + "/images/" + img.Name, Verb: http.MethodGet, CreatedAt: now, LastModifiedAt: now, ResourceVersion: 1, APIVersion: "v1", Kind: "image", Ref: "seca.storage/v1/tenants/" + tenant + "/images/" + img.Name, Tenant: tenant, Region: "global"}, Spec: imageSpec{BlockStorageRef: refObject{Resource: "block-storages/" + img.Name}, CPUArchitecture: normalizeArchitecture(img.Architecture)}})
 		}
-		respondJSON(w, http.StatusOK, imageIterator{Items: items, Metadata: responseMetaObject{Provider: "seca.storage/v1", Resource: "tenants/" + tenant + "/images", Verb: "list"}})
+		respondJSON(w, http.StatusOK, imageIterator{Items: items, Metadata: responseMetaObject{Provider: "seca.storage/v1", Resource: "tenants/" + tenant + "/images", Verb: http.MethodGet}})
 	}
 }
 

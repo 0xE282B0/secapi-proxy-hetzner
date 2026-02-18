@@ -24,6 +24,18 @@ type CatalogImage struct {
 	Status       string
 }
 
+type preferredRegionContextKey struct{}
+
+// WithPreferredRegion annotates the request context with a preferred region
+// used to rank catalog SKUs by location availability.
+func WithPreferredRegion(ctx context.Context, region string) context.Context {
+	region = strings.ToLower(strings.TrimSpace(region))
+	if region == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, preferredRegionContextKey{}, region)
+}
+
 func (s *RegionService) ListComputeSKUs(ctx context.Context) ([]ComputeSKU, error) {
 	if !s.configured {
 		return nil, ErrNotConfigured
@@ -33,20 +45,41 @@ func (s *RegionService) ListComputeSKUs(ctx context.Context) ([]ComputeSKU, erro
 		return nil, err
 	}
 
-	skus := make([]ComputeSKU, 0, len(serverTypes))
+	preferredRegion := preferredRegionFromContext(ctx)
+	ordered := make([]*hcloud.ServerType, 0, len(serverTypes))
 	for _, st := range serverTypes {
-		r := int(st.Memory)
+		if st == nil {
+			continue
+		}
+		ordered = append(ordered, st)
+	}
+
+	sort.Slice(ordered, func(i, j int) bool {
+		a := ordered[i]
+		b := ordered[j]
+		aInRegion := serverTypeAvailableInRegion(a, preferredRegion)
+		bInRegion := serverTypeAvailableInRegion(b, preferredRegion)
+		if aInRegion != bInRegion {
+			return aInRegion
+		}
+		aLocCount := serverTypeLocationCount(a)
+		bLocCount := serverTypeLocationCount(b)
+		if aLocCount != bLocCount {
+			return aLocCount > bLocCount
+		}
+		return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+	})
+
+	skus := make([]ComputeSKU, 0, len(ordered))
+	for _, st := range ordered {
 		skus = append(skus, ComputeSKU{
 			Name:         strings.ToLower(st.Name),
 			VCPU:         st.Cores,
-			RAMGiB:       r,
+			RAMGiB:       int(st.Memory),
 			Architecture: string(st.Architecture),
 		})
 	}
 
-	sort.Slice(skus, func(i, j int) bool {
-		return skus[i].Name < skus[j].Name
-	})
 	return skus, nil
 }
 
@@ -113,4 +146,64 @@ func (s *RegionService) GetCatalogImage(ctx context.Context, name string) (*Cata
 
 func int64ToString(v int64) string {
 	return strconv.FormatInt(v, 10)
+}
+
+func preferredRegionFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if region, ok := ctx.Value(preferredRegionContextKey{}).(string); ok {
+		return strings.ToLower(strings.TrimSpace(region))
+	}
+	// Optional compatibility fallback for generic middleware that stores region
+	// under a string key.
+	if region, ok := ctx.Value("region").(string); ok {
+		return strings.ToLower(strings.TrimSpace(region))
+	}
+	return ""
+}
+
+func serverTypeAvailableInRegion(st *hcloud.ServerType, region string) bool {
+	if st == nil || region == "" {
+		return true
+	}
+	region = strings.ToLower(strings.TrimSpace(region))
+
+	for _, loc := range st.Locations {
+		if loc.Location != nil && strings.EqualFold(loc.Location.Name, region) {
+			return true
+		}
+	}
+	for _, pricing := range st.Pricings {
+		if pricing.Location != nil && strings.EqualFold(pricing.Location.Name, region) {
+			return true
+		}
+	}
+	return false
+}
+
+func serverTypeLocationCount(st *hcloud.ServerType) int {
+	if st == nil {
+		return 0
+	}
+	seen := map[string]struct{}{}
+	for _, loc := range st.Locations {
+		if loc.Location == nil {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(loc.Location.Name))
+		if name != "" {
+			seen[name] = struct{}{}
+		}
+	}
+	for _, pricing := range st.Pricings {
+		if pricing.Location == nil {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(pricing.Location.Name))
+		if name != "" {
+			seen[name] = struct{}{}
+		}
+	}
+	return len(seen)
 }

@@ -11,14 +11,15 @@ CONFORMANCE_PROVIDER_REGION_V1 ?= http://localhost:8080
 CONFORMANCE_PROVIDER_AUTHORIZATION_V1 ?= http://localhost:8080
 CONFORMANCE_CLIENT_AUTH_TOKEN ?= dev-token
 CONFORMANCE_CLIENT_TENANT ?= dev
-CONFORMANCE_CLIENT_REGION ?= fsn1
+CONFORMANCE_CLIENT_REGION ?= nbg1
 CONFORMANCE_SCENARIOS_USERS ?= user1@example.com,user2@example.com
 CONFORMANCE_SCENARIOS_CIDR ?= 10.10.0.0/16
 CONFORMANCE_SCENARIOS_PUBLIC_IPS ?= 203.0.113.0/28
 CONFORMANCE_RESULTS_PATH ?= $(CURDIR)/.artifacts/conformance/results
 CONFORMANCE_SMOKE_FILTER ?= Region.V1.List
+CONFORMANCE_FILTER ?=
 
-.PHONY: all bootstrap fmt lint generate test test-integration test-contract phase1-smoke phase2-smoke conformance-bootstrap conformance-smoke conformance-full build run migrate-up migrate-down sqlc-gen docker-build docker-run docker-push release ci-verify ci-unit ci-integration ci-contract ci-conformance ci-package
+.PHONY: all bootstrap fmt lint generate test test-integration test-contract phase1-smoke phase2-smoke conformance-bootstrap conformance-run conformance-smoke conformance-full conformance-region conformance-auth conformance-workspace conformance-compute conformance-storage conformance-network conformance-foundation conformance-foundation-core build run migrate-up migrate-down sqlc-gen docker-build docker-run docker-push release ci-verify ci-unit ci-integration ci-contract ci-conformance ci-package
 
 all: build
 
@@ -69,9 +70,9 @@ phase2-smoke:
 	@curl -sS -X PUT http://localhost:8080/storage/v1/tenants/dev/workspaces/default/block-storages/invalid -H 'content-type: application/json' -d '{}' | jq -e '.status == 400' >/dev/null
 	@echo "Phase 2 smoke checks passed."
 
-conformance-smoke:
+conformance-run:
 	@$(MAKE) conformance-bootstrap
-	@echo "Running conformance smoke ($(CONFORMANCE_SMOKE_FILTER)) against $(CONFORMANCE_PROVIDER_REGION_V1) ..."
+	@echo "Running conformance filter '$(CONFORMANCE_FILTER)' against $(CONFORMANCE_PROVIDER_REGION_V1) ..."
 	@mkdir -p "$(CONFORMANCE_RESULTS_PATH)"
 	cd $(CONFORMANCE_DIR) && $(GO_ENV) go test -count=1 -v ./cmd/conformance -args run \
 		--provider.region.v1="$(CONFORMANCE_PROVIDER_REGION_V1)" \
@@ -82,29 +83,45 @@ conformance-smoke:
 		--scenarios.users="$(CONFORMANCE_SCENARIOS_USERS)" \
 		--scenarios.cidr="$(CONFORMANCE_SCENARIOS_CIDR)" \
 		--scenarios.public.ips="$(CONFORMANCE_SCENARIOS_PUBLIC_IPS)" \
-		--scenarios.filter="$(CONFORMANCE_SMOKE_FILTER)" \
+		--scenarios.filter="$(CONFORMANCE_FILTER)" \
 		--retry.base.delay=0 \
 		--retry.base.interval=1 \
 		--retry.max.attempts=3 \
 		--report.results.path="$(CONFORMANCE_RESULTS_PATH)"
 
+conformance-smoke:
+	@$(MAKE) conformance-run CONFORMANCE_FILTER="$(CONFORMANCE_SMOKE_FILTER)"
+
 conformance-full:
-	@$(MAKE) conformance-bootstrap
-	@echo "Running full conformance suite against $(CONFORMANCE_PROVIDER_REGION_V1) ..."
-	@mkdir -p "$(CONFORMANCE_RESULTS_PATH)"
-	cd $(CONFORMANCE_DIR) && $(GO_ENV) go test -count=1 -v ./cmd/conformance -args run \
-		--provider.region.v1="$(CONFORMANCE_PROVIDER_REGION_V1)" \
-		--provider.authorization.v1="$(CONFORMANCE_PROVIDER_AUTHORIZATION_V1)" \
-		--client.auth.token="$(CONFORMANCE_CLIENT_AUTH_TOKEN)" \
-		--client.tenant="$(CONFORMANCE_CLIENT_TENANT)" \
-		--client.region="$(CONFORMANCE_CLIENT_REGION)" \
-		--scenarios.users="$(CONFORMANCE_SCENARIOS_USERS)" \
-		--scenarios.cidr="$(CONFORMANCE_SCENARIOS_CIDR)" \
-		--scenarios.public.ips="$(CONFORMANCE_SCENARIOS_PUBLIC_IPS)" \
-		--retry.base.delay=0 \
-		--retry.base.interval=1 \
-		--retry.max.attempts=3 \
-		--report.results.path="$(CONFORMANCE_RESULTS_PATH)"
+	@$(MAKE) conformance-run CONFORMANCE_FILTER=".*"
+
+conformance-region:
+	@$(MAKE) conformance-run CONFORMANCE_FILTER="Region\\.V1\\..*"
+
+conformance-auth:
+	@$(MAKE) conformance-run CONFORMANCE_FILTER="Authorization\\.V1\\..*"
+
+conformance-workspace:
+	@$(MAKE) conformance-run CONFORMANCE_FILTER="Workspace\\.V1\\..*"
+
+conformance-compute:
+	@$(MAKE) conformance-run CONFORMANCE_FILTER="Compute\\.V1\\..*"
+
+conformance-storage:
+	@$(MAKE) conformance-run CONFORMANCE_FILTER="Storage\\.V1\\..*"
+
+conformance-network:
+	@$(MAKE) conformance-run CONFORMANCE_FILTER="Network\\.V1\\..*"
+
+conformance-foundation:
+	@$(MAKE) conformance-run CONFORMANCE_FILTER="Foundation\\.V1\\..*"
+
+conformance-foundation-core:
+	@$(MAKE) conformance-region
+	@$(MAKE) conformance-workspace
+	@$(MAKE) conformance-compute
+	@$(MAKE) conformance-storage
+	@$(MAKE) conformance-network
 
 conformance-bootstrap:
 	@if [ ! -d "$(CONFORMANCE_DIR)/.git" ]; then \
