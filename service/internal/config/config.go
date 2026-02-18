@@ -8,6 +8,7 @@ import (
 
 type Config struct {
 	ListenAddr           string
+	AdminListenAddr      string
 	LogLevel             string
 	DatabaseURL          string
 	PublicBaseURL        string
@@ -23,6 +24,7 @@ type Config struct {
 func Load() Config {
 	return Config{
 		ListenAddr:           getenvDefault("SECA_LISTEN_ADDR", ":8080"),
+		AdminListenAddr:      getenvDefault("SECA_ADMIN_LISTEN_ADDR", "127.0.0.1:8081"),
 		LogLevel:             getenvDefault("SECA_LOG_LEVEL", "info"),
 		DatabaseURL:          getenvDefault("SECA_DATABASE_URL", "postgres://postgres:postgres@localhost:5432/secapi_proxy?sslmode=disable"),
 		PublicBaseURL:        strings.TrimRight(getenvDefault("SECA_PUBLIC_BASE_URL", "http://localhost:8080"), "/"),

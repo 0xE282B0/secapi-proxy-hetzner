@@ -182,45 +182,59 @@ type wellknownEndpoint struct {
 	URL      string `json:"url"`
 }
 
-func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, catalogProvider CatalogProvider, computeStorageProvider ComputeStorageProvider) *http.Server {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", healthz)
-	mux.HandleFunc("/readyz", readyz(store))
-	mux.HandleFunc("/.wellknown/secapi", wellknown(cfg))
-	mux.HandleFunc("/v1/regions", listRegions(regionProvider))
-	mux.HandleFunc("/v1/regions/{name}", getRegion(regionProvider))
-	mux.HandleFunc("/v1/tenants/{tenant}/roles", listRoles(store))
-	mux.HandleFunc("/v1/tenants/{tenant}/roles/{name}", roleCRUD(store))
-	mux.HandleFunc("/v1/tenants/{tenant}/role-assignments", listRoleAssignments(store))
-	mux.HandleFunc("/v1/tenants/{tenant}/role-assignments/{name}", roleAssignmentCRUD(store))
-	mux.HandleFunc("/workspace/v1/tenants/{tenant}/workspaces", listWorkspaces(store))
-	mux.HandleFunc("/workspace/v1/tenants/{tenant}/workspaces/{name}", workspaceCRUD(store))
-	mux.HandleFunc(
+type Servers struct {
+	Public *http.Server
+	Admin  *http.Server
+}
+
+func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, catalogProvider CatalogProvider, computeStorageProvider ComputeStorageProvider) Servers {
+	publicMux := http.NewServeMux()
+	publicMux.HandleFunc("/healthz", healthz)
+	publicMux.HandleFunc("/readyz", readyz(store))
+	publicMux.HandleFunc("/.wellknown/secapi", wellknown(cfg))
+	publicMux.HandleFunc("/v1/regions", listRegions(regionProvider))
+	publicMux.HandleFunc("/v1/regions/{name}", getRegion(regionProvider))
+	publicMux.HandleFunc("/v1/tenants/{tenant}/roles", listRoles(store))
+	publicMux.HandleFunc("/v1/tenants/{tenant}/roles/{name}", roleCRUD(store))
+	publicMux.HandleFunc("/v1/tenants/{tenant}/role-assignments", listRoleAssignments(store))
+	publicMux.HandleFunc("/v1/tenants/{tenant}/role-assignments/{name}", roleAssignmentCRUD(store))
+	publicMux.HandleFunc("/workspace/v1/tenants/{tenant}/workspaces", listWorkspaces(store))
+	publicMux.HandleFunc("/workspace/v1/tenants/{tenant}/workspaces/{name}", workspaceCRUD(store))
+	publicMux.HandleFunc("/compute/v1/tenants/{tenant}/skus", listComputeSKUs(catalogProvider))
+	publicMux.HandleFunc("/compute/v1/tenants/{tenant}/skus/{name}", getComputeSKU(catalogProvider))
+	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/skus", listStorageSKUs())
+	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/skus/{name}", getStorageSKU())
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/skus", listNetworkSKUs())
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/skus/{name}", getNetworkSKU())
+	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/images", listImages(catalogProvider))
+	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/images/{name}", getImage(catalogProvider))
+	publicMux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances", listInstances(computeStorageProvider, store))
+	publicMux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}", instanceCRUD(computeStorageProvider, store))
+	publicMux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/start", startInstance(computeStorageProvider, store))
+	publicMux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/stop", stopInstance(computeStorageProvider, store))
+	publicMux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/restart", restartInstance(computeStorageProvider, store))
+	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages", listBlockStorages(computeStorageProvider, store))
+	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}", blockStorageCRUD(computeStorageProvider, store))
+	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/attach", attachBlockStorage(computeStorageProvider, store))
+	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/detach", detachBlockStorage(computeStorageProvider, store))
+
+	adminMux := http.NewServeMux()
+	adminMux.HandleFunc(
 		"/admin/v1/tenants/{tenant}/workspaces/{workspace}/providers/hetzner",
 		requireAdminAuth(cfg.AdminToken, adminWorkspaceHetznerBinding(store, regionProvider)),
 	)
-	mux.HandleFunc("/compute/v1/tenants/{tenant}/skus", listComputeSKUs(catalogProvider))
-	mux.HandleFunc("/compute/v1/tenants/{tenant}/skus/{name}", getComputeSKU(catalogProvider))
-	mux.HandleFunc("/storage/v1/tenants/{tenant}/skus", listStorageSKUs())
-	mux.HandleFunc("/storage/v1/tenants/{tenant}/skus/{name}", getStorageSKU())
-	mux.HandleFunc("/network/v1/tenants/{tenant}/skus", listNetworkSKUs())
-	mux.HandleFunc("/network/v1/tenants/{tenant}/skus/{name}", getNetworkSKU())
-	mux.HandleFunc("/storage/v1/tenants/{tenant}/images", listImages(catalogProvider))
-	mux.HandleFunc("/storage/v1/tenants/{tenant}/images/{name}", getImage(catalogProvider))
-	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances", listInstances(computeStorageProvider, store))
-	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}", instanceCRUD(computeStorageProvider, store))
-	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/start", startInstance(computeStorageProvider, store))
-	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/stop", stopInstance(computeStorageProvider, store))
-	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/restart", restartInstance(computeStorageProvider, store))
-	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages", listBlockStorages(computeStorageProvider, store))
-	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}", blockStorageCRUD(computeStorageProvider, store))
-	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/attach", attachBlockStorage(computeStorageProvider, store))
-	mux.HandleFunc("/storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/detach", detachBlockStorage(computeStorageProvider, store))
 
-	return &http.Server{
-		Addr:              cfg.ListenAddr,
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
+	return Servers{
+		Public: &http.Server{
+			Addr:              cfg.ListenAddr,
+			Handler:           publicMux,
+			ReadHeaderTimeout: 10 * time.Second,
+		},
+		Admin: &http.Server{
+			Addr:              cfg.AdminListenAddr,
+			Handler:           adminMux,
+			ReadHeaderTimeout: 10 * time.Second,
+		},
 	}
 }
 

@@ -34,12 +34,18 @@ func main() {
 	defer store.Close()
 
 	regionService := hetzner.NewRegionService(cfg)
-	srv := httpserver.New(cfg, store, regionService, regionService, regionService)
+	servers := httpserver.New(cfg, store, regionService, regionService, regionService)
 
 	go func() {
-		log.Printf("starting secapi-proxy-hetzner on %s", cfg.ListenAddr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("http server failed: %v", err)
+		log.Printf("starting secapi-proxy-hetzner public api on %s", cfg.ListenAddr)
+		if err := servers.Public.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("public http server failed: %v", err)
+		}
+	}()
+	go func() {
+		log.Printf("starting secapi-proxy-hetzner admin api on %s", cfg.AdminListenAddr)
+		if err := servers.Admin.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("admin http server failed: %v", err)
 		}
 	}()
 
@@ -48,7 +54,10 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("graceful shutdown failed: %v", err)
+	if err := servers.Public.Shutdown(shutdownCtx); err != nil {
+		log.Printf("public graceful shutdown failed: %v", err)
+	}
+	if err := servers.Admin.Shutdown(shutdownCtx); err != nil {
+		log.Printf("admin graceful shutdown failed: %v", err)
 	}
 }

@@ -45,6 +45,7 @@ services:
         condition: service_completed_successfully
     environment:
       SECA_LISTEN_ADDR: ":8080"
+      SECA_ADMIN_LISTEN_ADDR: "${SECA_ADMIN_LISTEN_ADDR:-:8081}"
       SECA_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/secapi_proxy?sslmode=disable"
       SECA_PUBLIC_BASE_URL: "http://localhost:8080"
       SECA_ADMIN_TOKEN: "${SECA_ADMIN_TOKEN:-dev-admin-token}"
@@ -56,6 +57,7 @@ services:
       HCLOUD_HETZNER_ENDPOINT: "https://api.hetzner.com/v1"
     ports:
       - "8080:8080"
+      - "127.0.0.1:8081:8081"
 
 volumes:
   secapi_proxy_pgdata:

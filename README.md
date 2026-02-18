@@ -17,6 +17,7 @@ Run server:
 SECA_DATABASE_URL='postgres://postgres:postgres@localhost:5432/secapi_proxy?sslmode=disable' \
 HCLOUD_TOKEN='your-token' \
 SECA_PUBLIC_BASE_URL='http://localhost:8080' \
+SECA_ADMIN_LISTEN_ADDR='127.0.0.1:8081' \
 make run
 ```
 
@@ -68,6 +69,7 @@ is cached before refetching from Hetzner. Set `0s` to disable caching.
 
 `SECA_ADMIN_TOKEN` protects `/admin/v1/...` endpoints via Bearer auth.  
 `SECA_CREDENTIALS_KEY` is required and encrypts persisted workspace provider tokens at rest.
+`SECA_ADMIN_LISTEN_ADDR` binds admin API to a dedicated listener separate from public API.
 
 ## Persistence stack
 
