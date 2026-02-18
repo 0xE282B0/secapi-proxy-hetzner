@@ -83,6 +83,9 @@ func (s *RegionService) ListRegions(ctx context.Context) ([]Region, error) {
 				{Name: "hetzner.cloud", Version: "v1", URL: s.cloudAPIURL},
 				{Name: "hetzner", Version: "v1", URL: s.apiURL},
 				{Name: "seca.region", Version: "v1", URL: s.publicBase},
+				{Name: "seca.compute", Version: "v1", URL: s.publicBase + "/compute"},
+				{Name: "seca.storage", Version: "v1", URL: s.publicBase + "/storage"},
+				{Name: "seca.network", Version: "v1", URL: s.publicBase + "/network"},
 			},
 		})
 	}

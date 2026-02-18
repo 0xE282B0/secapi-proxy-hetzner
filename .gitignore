@@ -1,4 +1,6 @@
 .DS_Store
+.artifacts/
+resources/conformance/
 **/.DS_Store
 .cache/
 service/secapi-proxy-hetzner

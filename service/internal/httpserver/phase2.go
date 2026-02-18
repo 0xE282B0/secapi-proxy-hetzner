@@ -101,7 +101,7 @@ func listInstances(provider ComputeStorageProvider, store *state.Store) http.Han
 
 		items := make([]instanceResource, 0, len(instances))
 		for _, instance := range instances {
-			items = append(items, toInstanceResource(tenant, workspace, instance, "list"))
+			items = append(items, toInstanceResource(tenant, workspace, instance, http.MethodGet))
 			_ = store.UpsertResourceBinding(r.Context(), state.ResourceBinding{
 				Tenant:      tenant,
 				Workspace:   workspace,
@@ -160,7 +160,7 @@ func getInstance(provider ComputeStorageProvider, store *state.Store) http.Handl
 			respondFromError(w, err, r.URL.Path)
 			return
 		}
-		respondJSON(w, http.StatusOK, toInstanceResource(tenant, workspace, *instance, "get"))
+		respondJSON(w, http.StatusOK, toInstanceResource(tenant, workspace, *instance, http.MethodGet))
 	}
 }
 
@@ -225,10 +225,10 @@ func putInstance(provider ComputeStorageProvider, store *state.Store) http.Handl
 			}
 		}
 		code := http.StatusOK
-		verb := "update"
+		verb := http.MethodPut
 		if created {
 			code = http.StatusCreated
-			verb = "create"
+			verb = http.MethodPut
 		}
 		respondJSON(w, code, toInstanceResource(tenant, workspace, *instance, verb))
 	}
@@ -323,7 +323,7 @@ func listBlockStorages(provider ComputeStorageProvider, store *state.Store) http
 		}
 		items := make([]blockStorageResource, 0, len(volumes))
 		for _, volume := range volumes {
-			items = append(items, toBlockStorageResource(tenant, workspace, volume, "list"))
+			items = append(items, toBlockStorageResource(tenant, workspace, volume, http.MethodGet))
 			_ = store.UpsertResourceBinding(r.Context(), state.ResourceBinding{
 				Tenant:      tenant,
 				Workspace:   workspace,
@@ -381,7 +381,7 @@ func getBlockStorage(provider ComputeStorageProvider, store *state.Store) http.H
 			respondFromError(w, err, r.URL.Path)
 			return
 		}
-		respondJSON(w, http.StatusOK, toBlockStorageResource(tenant, workspace, *volume, "get"))
+		respondJSON(w, http.StatusOK, toBlockStorageResource(tenant, workspace, *volume, http.MethodGet))
 	}
 }
 
@@ -437,10 +437,10 @@ func putBlockStorage(provider ComputeStorageProvider, store *state.Store) http.H
 			}
 		}
 		code := http.StatusOK
-		verb := "update"
+		verb := http.MethodPut
 		if created {
 			code = http.StatusCreated
-			verb = "create"
+			verb = http.MethodPut
 		}
 		respondJSON(w, code, toBlockStorageResource(tenant, workspace, *volume, verb))
 	}

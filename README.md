@@ -79,6 +79,8 @@ make sqlc-gen
 - Unit: `make ci-unit`
 - Integration: `make ci-integration`
 - Contract: `make ci-contract`
+- Conformance smoke: `make conformance-smoke`
+- Conformance full: `make conformance-full`
 - Package: `make ci-package`
 
 ## Docker
@@ -117,3 +119,33 @@ Run Phase 2 smoke checks:
 ```bash
 make phase2-smoke
 ```
+
+## Conformance
+
+The project is scored by the official conformance runner:
+`https://github.com/eu-sovereign-cloud/conformance`
+
+Use the Make targets:
+
+```bash
+make conformance-smoke
+make conformance-full
+```
+
+Default smoke uses `Region.V1.List` (compatible with current implementation scope).  
+`Foundation.V1.Usage` requires additional Workspace/Network/Storage/Compute conformance coverage and will fail until later phases.
+
+Defaults can be overridden through Make variables, for example:
+
+```bash
+make conformance-smoke \
+  CONFORMANCE_PROVIDER_REGION_V1='http://localhost:8080' \
+  CONFORMANCE_PROVIDER_AUTHORIZATION_V1='http://localhost:8080' \
+  CONFORMANCE_CLIENT_AUTH_TOKEN='dev-token' \
+  CONFORMANCE_CLIENT_TENANT='dev' \
+  CONFORMANCE_CLIENT_REGION='fsn1'
+```
+
+Results are written to:
+
+- `.artifacts/conformance/results`

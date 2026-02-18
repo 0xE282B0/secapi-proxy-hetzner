@@ -157,6 +157,10 @@ func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, c
 	mux.HandleFunc("/v1/regions/{name}", getRegion(regionProvider))
 	mux.HandleFunc("/compute/v1/tenants/{tenant}/skus", listComputeSKUs(catalogProvider))
 	mux.HandleFunc("/compute/v1/tenants/{tenant}/skus/{name}", getComputeSKU(catalogProvider))
+	mux.HandleFunc("/storage/v1/tenants/{tenant}/skus", listStorageSKUs())
+	mux.HandleFunc("/storage/v1/tenants/{tenant}/skus/{name}", getStorageSKU())
+	mux.HandleFunc("/network/v1/tenants/{tenant}/skus", listNetworkSKUs())
+	mux.HandleFunc("/network/v1/tenants/{tenant}/skus/{name}", getNetworkSKU())
 	mux.HandleFunc("/storage/v1/tenants/{tenant}/images", listImages(catalogProvider))
 	mux.HandleFunc("/storage/v1/tenants/{tenant}/images/{name}", getImage(catalogProvider))
 	mux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances", listInstances(phase2Provider, store))
@@ -222,7 +226,7 @@ func listRegions(regionProvider RegionProvider) http.HandlerFunc {
 		now := time.Now().UTC().Format(time.RFC3339)
 		items := make([]regionResource, 0, len(regions))
 		for _, region := range regions {
-			items = append(items, toRegionResource(region, now, "list"))
+			items = append(items, toRegionResource(region, now, http.MethodGet))
 		}
 		respondJSON(w, http.StatusOK, regionIterator{Items: items, Metadata: responseMetaObject{Provider: "seca.region/v1", Resource: "regions", Verb: "list"}})
 	}
@@ -249,7 +253,7 @@ func getRegion(regionProvider RegionProvider) http.HandlerFunc {
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		respondJSON(w, http.StatusOK, toRegionResource(*region, now, "get"))
+		respondJSON(w, http.StatusOK, toRegionResource(*region, now, http.MethodGet))
 	}
 }
 
@@ -272,7 +276,7 @@ func listComputeSKUs(catalogProvider CatalogProvider) http.HandlerFunc {
 		now := time.Now().UTC().Format(time.RFC3339)
 		items := make([]computeSKUResource, 0, len(skus))
 		for _, sku := range skus {
-			items = append(items, computeSKUResource{Metadata: resourceMetadata{Name: sku.Name, Provider: "seca.compute/v1", Resource: "tenants/" + tenant + "/skus/" + sku.Name, Verb: "list", CreatedAt: now, LastModifiedAt: now, ResourceVersion: 1, APIVersion: "v1", Kind: "instance-sku", Ref: "seca.compute/v1/tenants/" + tenant + "/skus/" + sku.Name, Tenant: tenant, Region: "global"}, Spec: computeSKUSpec{VCPU: sku.VCPU, RAM: sku.RAMGiB}})
+			items = append(items, computeSKUResource{Metadata: resourceMetadata{Name: sku.Name, Provider: "seca.compute/v1", Resource: "tenants/" + tenant + "/skus/" + sku.Name, Verb: http.MethodGet, CreatedAt: now, LastModifiedAt: now, ResourceVersion: 1, APIVersion: "v1", Kind: "instance-sku", Ref: "seca.compute/v1/tenants/" + tenant + "/skus/" + sku.Name, Tenant: tenant, Region: "global"}, Spec: computeSKUSpec{VCPU: sku.VCPU, RAM: sku.RAMGiB}})
 		}
 		respondJSON(w, http.StatusOK, computeSKUIterator{Items: items, Metadata: responseMetaObject{Provider: "seca.compute/v1", Resource: "tenants/" + tenant + "/skus", Verb: "list"}})
 	}
@@ -300,7 +304,157 @@ func getComputeSKU(catalogProvider CatalogProvider) http.HandlerFunc {
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		respondJSON(w, http.StatusOK, computeSKUResource{Metadata: resourceMetadata{Name: sku.Name, Provider: "seca.compute/v1", Resource: "tenants/" + tenant + "/skus/" + sku.Name, Verb: "get", CreatedAt: now, LastModifiedAt: now, ResourceVersion: 1, APIVersion: "v1", Kind: "instance-sku", Ref: "seca.compute/v1/tenants/" + tenant + "/skus/" + sku.Name, Tenant: tenant, Region: "global"}, Spec: computeSKUSpec{VCPU: sku.VCPU, RAM: sku.RAMGiB}})
+		respondJSON(w, http.StatusOK, computeSKUResource{Metadata: resourceMetadata{Name: sku.Name, Provider: "seca.compute/v1", Resource: "tenants/" + tenant + "/skus/" + sku.Name, Verb: http.MethodGet, CreatedAt: now, LastModifiedAt: now, ResourceVersion: 1, APIVersion: "v1", Kind: "instance-sku", Ref: "seca.compute/v1/tenants/" + tenant + "/skus/" + sku.Name, Tenant: tenant, Region: "global"}, Spec: computeSKUSpec{VCPU: sku.VCPU, RAM: sku.RAMGiB}})
+	}
+}
+
+func listStorageSKUs() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET is supported", r.URL.Path)
+			return
+		}
+		tenant := r.PathValue("tenant")
+		if tenant == "" {
+			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "tenant is required", r.URL.Path)
+			return
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		items := []computeSKUResource{
+			{
+				Metadata: resourceMetadata{
+					Name:            "hcloud-volume",
+					Provider:        "seca.storage/v1",
+					Resource:        "tenants/" + tenant + "/skus/hcloud-volume",
+					Verb:            http.MethodGet,
+					CreatedAt:       now,
+					LastModifiedAt:  now,
+					ResourceVersion: 1,
+					APIVersion:      "v1",
+					Kind:            "storage-sku",
+					Ref:             "seca.storage/v1/tenants/" + tenant + "/skus/hcloud-volume",
+					Tenant:          tenant,
+					Region:          "global",
+				},
+				Spec: computeSKUSpec{VCPU: 0, RAM: 0},
+			},
+		}
+		respondJSON(w, http.StatusOK, computeSKUIterator{
+			Items:    items,
+			Metadata: responseMetaObject{Provider: "seca.storage/v1", Resource: "tenants/" + tenant + "/skus", Verb: "list"},
+		})
+	}
+}
+
+func getStorageSKU() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET is supported", r.URL.Path)
+			return
+		}
+		tenant := r.PathValue("tenant")
+		name := strings.ToLower(r.PathValue("name"))
+		if tenant == "" || name == "" {
+			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "tenant and sku name are required", r.URL.Path)
+			return
+		}
+		if name != "hcloud-volume" {
+			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "storage sku not found", r.URL.Path)
+			return
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		respondJSON(w, http.StatusOK, computeSKUResource{
+			Metadata: resourceMetadata{
+				Name:            "hcloud-volume",
+				Provider:        "seca.storage/v1",
+				Resource:        "tenants/" + tenant + "/skus/hcloud-volume",
+				Verb:            http.MethodGet,
+				CreatedAt:       now,
+				LastModifiedAt:  now,
+				ResourceVersion: 1,
+				APIVersion:      "v1",
+				Kind:            "storage-sku",
+				Ref:             "seca.storage/v1/tenants/" + tenant + "/skus/hcloud-volume",
+				Tenant:          tenant,
+				Region:          "global",
+			},
+			Spec: computeSKUSpec{VCPU: 0, RAM: 0},
+		})
+	}
+}
+
+func listNetworkSKUs() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET is supported", r.URL.Path)
+			return
+		}
+		tenant := r.PathValue("tenant")
+		if tenant == "" {
+			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "tenant is required", r.URL.Path)
+			return
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		items := []computeSKUResource{
+			{
+				Metadata: resourceMetadata{
+					Name:            "hcloud-network",
+					Provider:        "seca.network/v1",
+					Resource:        "tenants/" + tenant + "/skus/hcloud-network",
+					Verb:            http.MethodGet,
+					CreatedAt:       now,
+					LastModifiedAt:  now,
+					ResourceVersion: 1,
+					APIVersion:      "v1",
+					Kind:            "network-sku",
+					Ref:             "seca.network/v1/tenants/" + tenant + "/skus/hcloud-network",
+					Tenant:          tenant,
+					Region:          "global",
+				},
+				Spec: computeSKUSpec{VCPU: 0, RAM: 0},
+			},
+		}
+		respondJSON(w, http.StatusOK, computeSKUIterator{
+			Items:    items,
+			Metadata: responseMetaObject{Provider: "seca.network/v1", Resource: "tenants/" + tenant + "/skus", Verb: "list"},
+		})
+	}
+}
+
+func getNetworkSKU() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET is supported", r.URL.Path)
+			return
+		}
+		tenant := r.PathValue("tenant")
+		name := strings.ToLower(r.PathValue("name"))
+		if tenant == "" || name == "" {
+			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "tenant and sku name are required", r.URL.Path)
+			return
+		}
+		if name != "hcloud-network" {
+			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "network sku not found", r.URL.Path)
+			return
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		respondJSON(w, http.StatusOK, computeSKUResource{
+			Metadata: resourceMetadata{
+				Name:            "hcloud-network",
+				Provider:        "seca.network/v1",
+				Resource:        "tenants/" + tenant + "/skus/hcloud-network",
+				Verb:            http.MethodGet,
+				CreatedAt:       now,
+				LastModifiedAt:  now,
+				ResourceVersion: 1,
+				APIVersion:      "v1",
+				Kind:            "network-sku",
+				Ref:             "seca.network/v1/tenants/" + tenant + "/skus/hcloud-network",
+				Tenant:          tenant,
+				Region:          "global",
+			},
+			Spec: computeSKUSpec{VCPU: 0, RAM: 0},
+		})
 	}
 }
 
@@ -323,7 +477,7 @@ func listImages(catalogProvider CatalogProvider) http.HandlerFunc {
 		now := time.Now().UTC().Format(time.RFC3339)
 		items := make([]imageResource, 0, len(images))
 		for _, img := range images {
-			items = append(items, imageResource{Metadata: resourceMetadata{Name: img.Name, Provider: "seca.storage/v1", Resource: "tenants/" + tenant + "/images/" + img.Name, Verb: "list", CreatedAt: now, LastModifiedAt: now, ResourceVersion: 1, APIVersion: "v1", Kind: "image", Ref: "seca.storage/v1/tenants/" + tenant + "/images/" + img.Name, Tenant: tenant, Region: "global"}, Spec: imageSpec{BlockStorageRef: refObject{Resource: "block-storages/" + img.Name}, CPUArchitecture: normalizeArchitecture(img.Architecture)}})
+			items = append(items, imageResource{Metadata: resourceMetadata{Name: img.Name, Provider: "seca.storage/v1", Resource: "tenants/" + tenant + "/images/" + img.Name, Verb: http.MethodGet, CreatedAt: now, LastModifiedAt: now, ResourceVersion: 1, APIVersion: "v1", Kind: "image", Ref: "seca.storage/v1/tenants/" + tenant + "/images/" + img.Name, Tenant: tenant, Region: "global"}, Spec: imageSpec{BlockStorageRef: refObject{Resource: "block-storages/" + img.Name}, CPUArchitecture: normalizeArchitecture(img.Architecture)}})
 		}
 		respondJSON(w, http.StatusOK, imageIterator{Items: items, Metadata: responseMetaObject{Provider: "seca.storage/v1", Resource: "tenants/" + tenant + "/images", Verb: "list"}})
 	}
@@ -351,7 +505,7 @@ func getImage(catalogProvider CatalogProvider) http.HandlerFunc {
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		respondJSON(w, http.StatusOK, imageResource{Metadata: resourceMetadata{Name: img.Name, Provider: "seca.storage/v1", Resource: "tenants/" + tenant + "/images/" + img.Name, Verb: "get", CreatedAt: now, LastModifiedAt: now, ResourceVersion: 1, APIVersion: "v1", Kind: "image", Ref: "seca.storage/v1/tenants/" + tenant + "/images/" + img.Name, Tenant: tenant, Region: "global"}, Spec: imageSpec{BlockStorageRef: refObject{Resource: "block-storages/" + img.Name}, CPUArchitecture: normalizeArchitecture(img.Architecture)}})
+		respondJSON(w, http.StatusOK, imageResource{Metadata: resourceMetadata{Name: img.Name, Provider: "seca.storage/v1", Resource: "tenants/" + tenant + "/images/" + img.Name, Verb: http.MethodGet, CreatedAt: now, LastModifiedAt: now, ResourceVersion: 1, APIVersion: "v1", Kind: "image", Ref: "seca.storage/v1/tenants/" + tenant + "/images/" + img.Name, Tenant: tenant, Region: "global"}, Spec: imageSpec{BlockStorageRef: refObject{Resource: "block-storages/" + img.Name}, CPUArchitecture: normalizeArchitecture(img.Architecture)}})
 	}
 }
 

@@ -5,8 +5,20 @@ DATABASE_URL ?= postgres://postgres:postgres@localhost:5432/secapi_proxy?sslmode
 SERVICE_DIR := service
 MIGRATIONS_DIR := $(SERVICE_DIR)/db/migrations
 GO_ENV := GOCACHE=$(CURDIR)/.cache/go-build
+CONFORMANCE_DIR ?= resources/conformance
+CONFORMANCE_REPO ?= https://github.com/eu-sovereign-cloud/conformance
+CONFORMANCE_PROVIDER_REGION_V1 ?= http://localhost:8080
+CONFORMANCE_PROVIDER_AUTHORIZATION_V1 ?= http://localhost:8080
+CONFORMANCE_CLIENT_AUTH_TOKEN ?= dev-token
+CONFORMANCE_CLIENT_TENANT ?= dev
+CONFORMANCE_CLIENT_REGION ?= fsn1
+CONFORMANCE_SCENARIOS_USERS ?= user1@example.com,user2@example.com
+CONFORMANCE_SCENARIOS_CIDR ?= 10.10.0.0/16
+CONFORMANCE_SCENARIOS_PUBLIC_IPS ?= 203.0.113.0/28
+CONFORMANCE_RESULTS_PATH ?= $(CURDIR)/.artifacts/conformance/results
+CONFORMANCE_SMOKE_FILTER ?= Region.V1.List
 
-.PHONY: all bootstrap fmt lint generate test test-integration test-contract phase1-smoke phase2-smoke conformance-smoke conformance-full build run migrate-up migrate-down sqlc-gen docker-build docker-run docker-push release ci-verify ci-unit ci-integration ci-contract ci-conformance ci-package
+.PHONY: all bootstrap fmt lint generate test test-integration test-contract phase1-smoke phase2-smoke conformance-bootstrap conformance-smoke conformance-full build run migrate-up migrate-down sqlc-gen docker-build docker-run docker-push release ci-verify ci-unit ci-integration ci-contract ci-conformance ci-package
 
 all: build
 
@@ -58,10 +70,49 @@ phase2-smoke:
 	@echo "Phase 2 smoke checks passed."
 
 conformance-smoke:
-	@echo "conformance smoke placeholder: wire eu-sovereign-cloud/conformance in next phase"
+	@$(MAKE) conformance-bootstrap
+	@echo "Running conformance smoke ($(CONFORMANCE_SMOKE_FILTER)) against $(CONFORMANCE_PROVIDER_REGION_V1) ..."
+	@mkdir -p "$(CONFORMANCE_RESULTS_PATH)"
+	cd $(CONFORMANCE_DIR) && $(GO_ENV) go test -count=1 -v ./cmd/conformance -args run \
+		--provider.region.v1="$(CONFORMANCE_PROVIDER_REGION_V1)" \
+		--provider.authorization.v1="$(CONFORMANCE_PROVIDER_AUTHORIZATION_V1)" \
+		--client.auth.token="$(CONFORMANCE_CLIENT_AUTH_TOKEN)" \
+		--client.tenant="$(CONFORMANCE_CLIENT_TENANT)" \
+		--client.region="$(CONFORMANCE_CLIENT_REGION)" \
+		--scenarios.users="$(CONFORMANCE_SCENARIOS_USERS)" \
+		--scenarios.cidr="$(CONFORMANCE_SCENARIOS_CIDR)" \
+		--scenarios.public.ips="$(CONFORMANCE_SCENARIOS_PUBLIC_IPS)" \
+		--scenarios.filter="$(CONFORMANCE_SMOKE_FILTER)" \
+		--retry.base.delay=0 \
+		--retry.base.interval=1 \
+		--retry.max.attempts=3 \
+		--report.results.path="$(CONFORMANCE_RESULTS_PATH)"
 
 conformance-full:
-	@echo "conformance full placeholder: wire eu-sovereign-cloud/conformance in next phase"
+	@$(MAKE) conformance-bootstrap
+	@echo "Running full conformance suite against $(CONFORMANCE_PROVIDER_REGION_V1) ..."
+	@mkdir -p "$(CONFORMANCE_RESULTS_PATH)"
+	cd $(CONFORMANCE_DIR) && $(GO_ENV) go test -count=1 -v ./cmd/conformance -args run \
+		--provider.region.v1="$(CONFORMANCE_PROVIDER_REGION_V1)" \
+		--provider.authorization.v1="$(CONFORMANCE_PROVIDER_AUTHORIZATION_V1)" \
+		--client.auth.token="$(CONFORMANCE_CLIENT_AUTH_TOKEN)" \
+		--client.tenant="$(CONFORMANCE_CLIENT_TENANT)" \
+		--client.region="$(CONFORMANCE_CLIENT_REGION)" \
+		--scenarios.users="$(CONFORMANCE_SCENARIOS_USERS)" \
+		--scenarios.cidr="$(CONFORMANCE_SCENARIOS_CIDR)" \
+		--scenarios.public.ips="$(CONFORMANCE_SCENARIOS_PUBLIC_IPS)" \
+		--retry.base.delay=0 \
+		--retry.base.interval=1 \
+		--retry.max.attempts=3 \
+		--report.results.path="$(CONFORMANCE_RESULTS_PATH)"
+
+conformance-bootstrap:
+	@if [ ! -d "$(CONFORMANCE_DIR)/.git" ]; then \
+		echo "Cloning $(CONFORMANCE_REPO) into $(CONFORMANCE_DIR)"; \
+		git clone "$(CONFORMANCE_REPO)" "$(CONFORMANCE_DIR)"; \
+	else \
+		echo "Conformance repo already present at $(CONFORMANCE_DIR)"; \
+	fi
 
 build:
 	cd $(SERVICE_DIR) && $(GO_ENV) go build ./cmd/secapi-proxy-hetzner
