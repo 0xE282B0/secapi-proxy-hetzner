@@ -26,11 +26,12 @@ type Provider struct {
 }
 
 type RegionService struct {
-	client      *hcloud.Client
-	configured  bool
-	publicBase  string
-	cloudAPIURL string
-	apiURL      string
+	client          *hcloud.Client
+	configured      bool
+	publicBase      string
+	cloudAPIURL     string
+	apiURL          string
+	conformanceMode bool
 }
 
 func NewRegionService(cfg config.Config) *RegionService {
@@ -41,11 +42,12 @@ func NewRegionService(cfg config.Config) *RegionService {
 		hcloud.WithHetznerEndpoint(cfg.HetznerPrimaryAPIURL),
 	)
 	return &RegionService{
-		client:      client,
-		configured:  configured,
-		publicBase:  cfg.PublicBaseURL,
-		cloudAPIURL: cfg.HetznerCloudAPIURL,
-		apiURL:      cfg.HetznerPrimaryAPIURL,
+		client:          client,
+		configured:      configured,
+		publicBase:      cfg.PublicBaseURL,
+		cloudAPIURL:     cfg.HetznerCloudAPIURL,
+		apiURL:          cfg.HetznerPrimaryAPIURL,
+		conformanceMode: cfg.ConformanceMode,
 	}
 }
 
@@ -83,6 +85,7 @@ func (s *RegionService) ListRegions(ctx context.Context) ([]Region, error) {
 				{Name: "hetzner.cloud", Version: "v1", URL: s.cloudAPIURL},
 				{Name: "hetzner", Version: "v1", URL: s.apiURL},
 				{Name: "seca.region", Version: "v1", URL: s.publicBase},
+				{Name: "seca.workspace", Version: "v1", URL: s.publicBase + "/workspace"},
 				{Name: "seca.compute", Version: "v1", URL: s.publicBase + "/compute"},
 				{Name: "seca.storage", Version: "v1", URL: s.publicBase + "/storage"},
 				{Name: "seca.network", Version: "v1", URL: s.publicBase + "/network"},

@@ -13,6 +13,7 @@ type Config struct {
 	HetznerToken         string
 	HetznerCloudAPIURL   string
 	HetznerPrimaryAPIURL string
+	ConformanceMode      bool
 }
 
 func Load() Config {
@@ -24,6 +25,7 @@ func Load() Config {
 		HetznerToken:         getenvFirst("HCLOUD_TOKEN", "HETZNER_API_TOKEN"),
 		HetznerCloudAPIURL:   strings.TrimRight(getenvFirstDefault("https://api.hetzner.cloud/v1", "HCLOUD_ENDPOINT", "HETZNER_CLOUD_API_URL"), "/"),
 		HetznerPrimaryAPIURL: strings.TrimRight(getenvFirstDefault("https://api.hetzner.com/v1", "HCLOUD_HETZNER_ENDPOINT", "HETZNER_PRIMARY_API_URL"), "/"),
+		ConformanceMode:      getenvBool("SECA_CONFORMANCE_MODE"),
 	}
 }
 
@@ -48,4 +50,9 @@ func getenvFirstDefault(fallback string, keys ...string) string {
 		return val
 	}
 	return fallback
+}
+
+func getenvBool(key string) bool {
+	val := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	return val == "1" || val == "true" || val == "yes" || val == "on"
 }
