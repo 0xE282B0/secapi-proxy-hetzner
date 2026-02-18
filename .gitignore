@@ -4,3 +4,4 @@ resources/conformance/
 **/.DS_Store
 .cache/
 service/secapi-proxy-hetzner
+MEMORY-*.md
