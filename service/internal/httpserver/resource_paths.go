@@ -44,8 +44,12 @@ func workspaceExecutionContext(w http.ResponseWriter, r *http.Request, store *st
 		respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "workspace not found", r.URL.Path)
 		return nil, false
 	}
-	stateValue, _ := ws.Status["state"].(string)
-	if strings.ToLower(strings.TrimSpace(stateValue)) != "active" {
+	ws, err = waitForActiveWorkspace(r.Context(), store, tenant, workspace, ws, 2*time.Second, 500*time.Millisecond)
+	if err != nil {
+		respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to resolve workspace", r.URL.Path)
+		return nil, false
+	}
+	if ws == nil {
 		respondProblem(w, http.StatusConflict, "http://secapi.cloud/errors/resource-conflict", "Conflict", "workspace is not active", r.URL.Path)
 		return nil, false
 	}
@@ -64,6 +68,45 @@ func workspaceExecutionContext(w http.ResponseWriter, r *http.Request, store *st
 		CloudAPIURL: cred.APIEndpoint,
 	})
 	return ctx, true
+}
+
+func waitForActiveWorkspace(ctx context.Context, store *state.Store, tenant, workspace string, ws *state.WorkspaceResource, timeout, interval time.Duration) (*state.WorkspaceResource, error) {
+	stateValue, _ := ws.Status["state"].(string)
+	current := strings.ToLower(strings.TrimSpace(stateValue))
+	if current == "active" {
+		return ws, nil
+	}
+	if current != "creating" {
+		return nil, nil
+	}
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil, nil
+		case <-time.After(interval):
+		}
+
+		refreshed, err := store.GetWorkspace(ctx, tenant, workspace)
+		if err != nil {
+			return nil, err
+		}
+		if refreshed == nil {
+			return nil, nil
+		}
+
+		stateValue, _ = refreshed.Status["state"].(string)
+		current = strings.ToLower(strings.TrimSpace(stateValue))
+		if current == "active" {
+			return refreshed, nil
+		}
+		if current != "creating" {
+			return nil, nil
+		}
+	}
+
+	return nil, nil
 }
 
 func resourceNameFromRef(ref string) string {

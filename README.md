@@ -132,6 +132,24 @@ Run Phase 2 smoke checks:
 make phase2-smoke
 ```
 
+## Minimal workspace token provisioner
+
+For conformance/local runs where workspaces start in `creating`, use:
+
+```bash
+export HCLOUD_TOKEN='<token-from-hetzner-console>'
+export SECA_ADMIN_TOKEN='dev-admin-token'
+export SECA_PUBLIC_BASE_URL='http://localhost:8080'
+export SECA_ADMIN_BASE_URL='http://127.0.0.1:8081'
+export SECA_TENANTS='dev'
+./scripts/token-provisioner.sh
+```
+
+Optional:
+- `SECA_TOKEN_PROVISIONER_INTERVAL` (default: `1`)
+- `HCLOUD_ENDPOINT`
+- `HCLOUD_PROJECT_REF`
+
 ## Conformance
 
 The project is scored by the official conformance runner:
