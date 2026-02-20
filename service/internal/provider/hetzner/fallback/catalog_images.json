@@ -1,0 +1,16 @@
+[
+  {
+    "name": "ubuntu-24.04",
+    "type": "system",
+    "architecture": "x86",
+    "description": "Ubuntu 24.04 LTS",
+    "status": "available"
+  },
+  {
+    "name": "ubuntu-24.04-arm",
+    "type": "system",
+    "architecture": "arm",
+    "description": "Ubuntu 24.04 LTS (ARM)",
+    "status": "available"
+  }
+]

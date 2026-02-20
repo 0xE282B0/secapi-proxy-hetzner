@@ -1,0 +1,26 @@
+[
+  {
+    "name": "ash",
+    "city": "Ashburn, VA",
+    "country": "US",
+    "zones": ["ash-dc1"]
+  },
+  {
+    "name": "fsn1",
+    "city": "Falkenstein",
+    "country": "DE",
+    "zones": ["fsn1-dc14"]
+  },
+  {
+    "name": "hel1",
+    "city": "Helsinki",
+    "country": "FI",
+    "zones": ["hel1-dc2"]
+  },
+  {
+    "name": "nbg1",
+    "city": "Nuremberg",
+    "country": "DE",
+    "zones": ["nbg1-dc3"]
+  }
+]

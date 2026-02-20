@@ -2,6 +2,7 @@ package hetzner
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,11 +38,11 @@ func WithPreferredRegion(ctx context.Context, region string) context.Context {
 }
 
 func (s *RegionService) ListComputeSKUs(ctx context.Context) ([]ComputeSKU, error) {
-	if !s.configured {
-		return nil, ErrNotConfigured
-	}
 	serverTypes, err := s.listServerTypes(ctx)
 	if err != nil {
+		if _, hasWorkspaceCred := workspaceCredentialFromContext(ctx); !hasWorkspaceCred && shouldUseStaticCatalogFallback(err) {
+			return s.staticComputeSKUs(), nil
+		}
 		return nil, err
 	}
 
@@ -98,11 +99,11 @@ func (s *RegionService) GetComputeSKU(ctx context.Context, name string) (*Comput
 }
 
 func (s *RegionService) ListCatalogImages(ctx context.Context) ([]CatalogImage, error) {
-	if !s.configured {
-		return nil, ErrNotConfigured
-	}
 	images, err := s.clientFor(ctx).Image.AllWithOpts(ctx, hcloud.ImageListOpts{IncludeDeprecated: true})
 	if err != nil {
+		if _, hasWorkspaceCred := workspaceCredentialFromContext(ctx); !hasWorkspaceCred && shouldUseStaticCatalogFallback(err) {
+			return s.staticCatalogImages(), nil
+		}
 		return nil, err
 	}
 
@@ -206,4 +207,20 @@ func serverTypeLocationCount(st *hcloud.ServerType) int {
 		}
 	}
 	return len(seen)
+}
+
+func shouldUseStaticCatalogFallback(err error) bool {
+	var apiErr hcloud.Error
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.Code == hcloud.ErrorCodeUnauthorized || apiErr.Code == hcloud.ErrorCodeForbidden
+}
+
+func (s *RegionService) staticComputeSKUs() []ComputeSKU {
+	return loadFallbackComputeSKUs()
+}
+
+func (s *RegionService) staticCatalogImages() []CatalogImage {
+	return loadFallbackCatalogImages()
 }

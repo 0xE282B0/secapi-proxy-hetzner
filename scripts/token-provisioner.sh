@@ -11,8 +11,8 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ -z "${HCLOUD_TOKEN:-}" ]; then
-  echo "error: HCLOUD_TOKEN is required" >&2
+if [ -z "${SECA_TOKEN_PROVISIONER_HETZNER_TOKEN:-}" ]; then
+  echo "error: SECA_TOKEN_PROVISIONER_HETZNER_TOKEN is required" >&2
   exit 1
 fi
 
@@ -32,7 +32,7 @@ log() {
 
 build_payload() {
   local payload
-  payload="$(jq -nc --arg token "$HCLOUD_TOKEN" '{apiToken:$token}')"
+  payload="$(jq -nc --arg token "$SECA_TOKEN_PROVISIONER_HETZNER_TOKEN" '{apiToken:$token}')"
 
   if [ -n "${HCLOUD_ENDPOINT:-}" ]; then
     payload="$(printf '%s' "$payload" | jq --arg v "$HCLOUD_ENDPOINT" '.apiEndpoint = $v')"

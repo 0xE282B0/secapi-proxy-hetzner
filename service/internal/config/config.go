@@ -14,7 +14,6 @@ type Config struct {
 	PublicBaseURL        string
 	AdminToken           string
 	CredentialsKey       string
-	HetznerToken         string
 	HetznerCloudAPIURL   string
 	HetznerPrimaryAPIURL string
 	HetznerAvailCacheTTL time.Duration
@@ -30,7 +29,6 @@ func Load() Config {
 		PublicBaseURL:        strings.TrimRight(getenvDefault("SECA_PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
 		AdminToken:           getenvDefault("SECA_ADMIN_TOKEN", ""),
 		CredentialsKey:       getenvDefault("SECA_CREDENTIALS_KEY", ""),
-		HetznerToken:         getenvFirst("HCLOUD_TOKEN", "HETZNER_API_TOKEN"),
 		HetznerCloudAPIURL:   strings.TrimRight(getenvFirstDefault("https://api.hetzner.cloud/v1", "HCLOUD_ENDPOINT", "HETZNER_CLOUD_API_URL"), "/"),
 		HetznerPrimaryAPIURL: strings.TrimRight(getenvFirstDefault("https://api.hetzner.com/v1", "HCLOUD_HETZNER_ENDPOINT", "HETZNER_PRIMARY_API_URL"), "/"),
 		HetznerAvailCacheTTL: getenvDurationDefault("SECA_HETZNER_AVAILABILITY_CACHE_TTL", "60s"),

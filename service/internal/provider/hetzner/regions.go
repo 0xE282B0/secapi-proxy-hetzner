@@ -42,15 +42,14 @@ type RegionService struct {
 }
 
 func NewRegionService(cfg config.Config) *RegionService {
-	configured := cfg.HetznerToken != ""
 	client := hcloud.NewClient(
-		hcloud.WithToken(cfg.HetznerToken),
+		hcloud.WithToken(""),
 		hcloud.WithEndpoint(cfg.HetznerCloudAPIURL),
 		hcloud.WithHetznerEndpoint(cfg.HetznerPrimaryAPIURL),
 	)
 	return &RegionService{
 		client:          client,
-		configured:      configured,
+		configured:      true,
 		publicBase:      cfg.PublicBaseURL,
 		cloudAPIURL:     cfg.HetznerCloudAPIURL,
 		apiURL:          cfg.HetznerPrimaryAPIURL,
@@ -100,16 +99,18 @@ func cloneServerTypes(in []*hcloud.ServerType) []*hcloud.ServerType {
 }
 
 func (s *RegionService) ListRegions(ctx context.Context) ([]Region, error) {
-	if !s.configured {
-		return nil, ErrNotConfigured
-	}
-
 	locations, err := s.clientFor(ctx).Location.All(ctx)
 	if err != nil {
+		if _, hasWorkspaceCred := workspaceCredentialFromContext(ctx); !hasWorkspaceCred && shouldUseStaticRegionsFallback(err) {
+			return s.staticRegions(), nil
+		}
 		return nil, err
 	}
 	dataCenters, err := s.clientFor(ctx).Datacenter.All(ctx)
 	if err != nil {
+		if _, hasWorkspaceCred := workspaceCredentialFromContext(ctx); !hasWorkspaceCred && shouldUseStaticRegionsFallback(err) {
+			return s.staticRegions(), nil
+		}
 		return nil, err
 	}
 
@@ -145,6 +146,38 @@ func (s *RegionService) ListRegions(ctx context.Context) ([]Region, error) {
 		return regions[i].Name < regions[j].Name
 	})
 	return regions, nil
+}
+
+func shouldUseStaticRegionsFallback(err error) bool {
+	var apiErr hcloud.Error
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.Code == hcloud.ErrorCodeUnauthorized || apiErr.Code == hcloud.ErrorCodeForbidden
+}
+
+func (s *RegionService) staticRegions() []Region {
+	records := loadFallbackRegions()
+	out := make([]Region, 0, len(records))
+	providers := []Provider{
+		{Name: "hetzner.cloud", Version: "v1", URL: s.cloudAPIURL},
+		{Name: "hetzner", Version: "v1", URL: s.apiURL},
+		{Name: "seca.region", Version: "v1", URL: s.publicBase},
+		{Name: "seca.workspace", Version: "v1", URL: s.publicBase + "/workspace"},
+		{Name: "seca.compute", Version: "v1", URL: s.publicBase + "/compute"},
+		{Name: "seca.storage", Version: "v1", URL: s.publicBase + "/storage"},
+		{Name: "seca.network", Version: "v1", URL: s.publicBase + "/network"},
+	}
+	for _, record := range records {
+		out = append(out, Region{
+			Name:      record.Name,
+			City:      record.City,
+			Country:   record.Country,
+			Zones:     record.Zones,
+			Providers: providers,
+		})
+	}
+	return out
 }
 
 func (s *RegionService) GetRegion(ctx context.Context, name string) (*Region, error) {

@@ -15,7 +15,6 @@ Run server:
 
 ```bash
 SECA_DATABASE_URL='postgres://postgres:postgres@localhost:5432/secapi_proxy?sslmode=disable' \
-HCLOUD_TOKEN='your-token' \
 SECA_PUBLIC_BASE_URL='http://localhost:8080' \
 SECA_ADMIN_LISTEN_ADDR='127.0.0.1:8081' \
 make run
@@ -42,15 +41,14 @@ Health endpoints:
 - `POST /storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/attach`
 - `POST /storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/detach`
 
-## Hetzner token setup
+## Workspace token setup
 
 1. Open your Hetzner Cloud project in the console.
 2. Go to `Security` -> `API Tokens`.
 3. Create a token for your dev project.
-4. Export it before running the service:
+4. Provide the token to a workspace via admin API (manually or with token-provisioner):
 
 ```bash
-export HCLOUD_TOKEN='<token-from-hetzner-console>'
 export SECA_ADMIN_TOKEN='dev-admin-token'
 # 32-byte key, base64 encoded (example below is for local dev only)
 export SECA_CREDENTIALS_KEY='MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY='
@@ -107,7 +105,6 @@ make docker-run
 Start Postgres + migrations + API service:
 
 ```bash
-export HCLOUD_TOKEN='<token-from-hetzner-console>'
 docker compose up --build
 ```
 
@@ -137,7 +134,7 @@ make phase2-smoke
 For conformance/local runs where workspaces start in `creating`, use:
 
 ```bash
-export HCLOUD_TOKEN='<token-from-hetzner-console>'
+export SECA_TOKEN_PROVISIONER_HETZNER_TOKEN='<token-from-hetzner-console>'
 export SECA_ADMIN_TOKEN='dev-admin-token'
 export SECA_PUBLIC_BASE_URL='http://localhost:8080'
 export SECA_ADMIN_BASE_URL='http://127.0.0.1:8081'

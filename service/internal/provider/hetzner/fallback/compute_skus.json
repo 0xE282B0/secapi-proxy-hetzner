@@ -1,0 +1,8 @@
+[
+  { "name": "cpx11", "vCPU": 2, "ramGiB": 2, "architecture": "x86" },
+  { "name": "cpx21", "vCPU": 3, "ramGiB": 4, "architecture": "x86" },
+  { "name": "cpx31", "vCPU": 4, "ramGiB": 8, "architecture": "x86" },
+  { "name": "cax11", "vCPU": 2, "ramGiB": 4, "architecture": "arm" },
+  { "name": "cax21", "vCPU": 4, "ramGiB": 8, "architecture": "arm" },
+  { "name": "ccx13", "vCPU": 2, "ramGiB": 8, "architecture": "x86" }
+]
