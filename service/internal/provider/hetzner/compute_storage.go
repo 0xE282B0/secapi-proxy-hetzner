@@ -770,18 +770,36 @@ func (s *RegionService) SyncInstanceNetworks(ctx context.Context, instanceName s
 		return notFoundError(fmt.Sprintf("instance %q not found", instanceName))
 	}
 
-	desired := map[string]struct{}{}
+	desiredByName := map[string]struct{}{}
 	for _, name := range networkNames {
 		n := strings.ToLower(strings.TrimSpace(name))
 		if n == "" {
 			continue
 		}
-		desired[n] = struct{}{}
+		desiredByName[n] = struct{}{}
 	}
 
-	for networkName := range desired {
+	desiredByID := map[int64]struct{}{}
+	for networkName := range desiredByName {
+		network, _, getErr := s.clientFor(ctx).Network.GetByName(ctx, networkName)
+		if getErr != nil {
+			return getErr
+		}
+		if network == nil {
+			return notFoundError(fmt.Sprintf("network %q not found", networkName))
+		}
+		desiredByID[network.ID] = struct{}{}
+	}
+
+	for networkName := range desiredByName {
 		attached := false
 		for _, privateNet := range server.PrivateNet {
+			if privateNet.Network != nil {
+				if _, ok := desiredByID[privateNet.Network.ID]; ok {
+					attached = true
+					break
+				}
+			}
 			if privateNet.Network != nil && strings.EqualFold(privateNet.Network.Name, networkName) {
 				attached = true
 				break
@@ -806,8 +824,7 @@ func (s *RegionService) SyncInstanceNetworks(ctx context.Context, instanceName s
 		if privateNet.Network == nil {
 			continue
 		}
-		current := strings.ToLower(strings.TrimSpace(privateNet.Network.Name))
-		if _, keep := desired[current]; keep {
+		if _, keep := desiredByID[privateNet.Network.ID]; keep {
 			continue
 		}
 		action, _, detachErr := s.clientFor(ctx).Server.DetachFromNetwork(ctx, server, hcloud.ServerDetachFromNetworkOpts{
@@ -823,6 +840,32 @@ func (s *RegionService) SyncInstanceNetworks(ctx context.Context, instanceName s
 		}
 	}
 	return nil
+}
+
+func (s *RegionService) GetInstancePrivateIPv4(ctx context.Context, instanceName, networkName string) (string, error) {
+	if !s.configured {
+		return "", ErrNotConfigured
+	}
+	server, _, err := s.clientFor(ctx).Server.GetByName(ctx, strings.TrimSpace(instanceName))
+	if err != nil {
+		return "", err
+	}
+	if server == nil {
+		return "", notFoundError(fmt.Sprintf("instance %q not found", instanceName))
+	}
+	network, _, err := s.clientFor(ctx).Network.GetByName(ctx, strings.TrimSpace(networkName))
+	if err != nil {
+		return "", err
+	}
+	if network == nil {
+		return "", notFoundError(fmt.Sprintf("network %q not found", networkName))
+	}
+	for _, privateNet := range server.PrivateNet {
+		if privateNet.Network != nil && privateNet.Network.ID == network.ID && privateNet.IP != nil {
+			return privateNet.IP.String(), nil
+		}
+	}
+	return "", notFoundError(fmt.Sprintf("instance %q is not attached to network %q", instanceName, networkName))
 }
 
 func (s *RegionService) getServerByName(ctx context.Context, name string) (*hcloud.Server, error) {

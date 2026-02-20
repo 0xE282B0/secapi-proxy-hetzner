@@ -121,6 +121,105 @@ func (s *RegionService) DeleteNetwork(ctx context.Context, name string) (bool, e
 	return true, nil
 }
 
+func (s *RegionService) UpsertNetworkRoute(ctx context.Context, networkName, destinationCIDR, gatewayIP string) error {
+	if !s.configured {
+		return ErrNotConfigured
+	}
+	network, _, err := s.clientFor(ctx).Network.GetByName(ctx, strings.TrimSpace(networkName))
+	if err != nil {
+		return err
+	}
+	if network == nil {
+		return notFoundError(fmt.Sprintf("network %q not found", networkName))
+	}
+	_, destination, err := net.ParseCIDR(strings.TrimSpace(destinationCIDR))
+	if err != nil || destination == nil {
+		return invalidRequestError("invalid destination cidr")
+	}
+	gateway := net.ParseIP(strings.TrimSpace(gatewayIP))
+	if gateway == nil {
+		return invalidRequestError("invalid route gateway ip")
+	}
+
+	for _, route := range network.Routes {
+		if route.Destination == nil || route.Destination.String() != destination.String() {
+			continue
+		}
+		if route.Gateway != nil && route.Gateway.Equal(gateway) {
+			return nil
+		}
+		action, _, deleteErr := s.clientFor(ctx).Network.DeleteRoute(ctx, network, hcloud.NetworkDeleteRouteOpts{
+			Route: hcloud.NetworkRoute{
+				Destination: route.Destination,
+				Gateway:     route.Gateway,
+			},
+		})
+		if deleteErr != nil {
+			return deleteErr
+		}
+		if action != nil {
+			if waitErr := s.clientFor(ctx).Action.WaitFor(ctx, action); waitErr != nil {
+				return waitErr
+			}
+		}
+		break
+	}
+
+	action, _, err := s.clientFor(ctx).Network.AddRoute(ctx, network, hcloud.NetworkAddRouteOpts{
+		Route: hcloud.NetworkRoute{
+			Destination: destination,
+			Gateway:     gateway,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if action != nil {
+		if waitErr := s.clientFor(ctx).Action.WaitFor(ctx, action); waitErr != nil {
+			return waitErr
+		}
+	}
+	return nil
+}
+
+func (s *RegionService) DeleteNetworkRoute(ctx context.Context, networkName, destinationCIDR string) error {
+	if !s.configured {
+		return ErrNotConfigured
+	}
+	network, _, err := s.clientFor(ctx).Network.GetByName(ctx, strings.TrimSpace(networkName))
+	if err != nil {
+		return err
+	}
+	if network == nil {
+		return notFoundError(fmt.Sprintf("network %q not found", networkName))
+	}
+	_, destination, err := net.ParseCIDR(strings.TrimSpace(destinationCIDR))
+	if err != nil || destination == nil {
+		return invalidRequestError("invalid destination cidr")
+	}
+	for _, route := range network.Routes {
+		if route.Destination == nil || route.Destination.String() != destination.String() {
+			continue
+		}
+		action, _, deleteErr := s.clientFor(ctx).Network.DeleteRoute(ctx, network, hcloud.NetworkDeleteRouteOpts{
+			Route: hcloud.NetworkRoute{
+				Destination: route.Destination,
+				Gateway:     route.Gateway,
+			},
+		})
+		if deleteErr != nil {
+			return deleteErr
+		}
+		if action != nil {
+			if waitErr := s.clientFor(ctx).Action.WaitFor(ctx, action); waitErr != nil {
+				return waitErr
+			}
+		}
+		return nil
+	}
+	return nil
+}
+
 func networkFromHCloud(item *hcloud.Network) Network {
 	cidr := ""
 	if item.IPRange != nil {
@@ -133,4 +232,3 @@ func networkFromHCloud(item *hcloud.Network) Network {
 		CreatedAt: item.Created,
 	}
 }
-

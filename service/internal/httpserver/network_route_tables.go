@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/config"
+	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/provider/hetzner"
 	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/state"
 )
 
@@ -91,15 +93,15 @@ func listRouteTables(store *state.Store) http.HandlerFunc {
 	}
 }
 
-func routeTableCRUD(store *state.Store, computeProvider ComputeStorageProvider, cfg config.Config) http.HandlerFunc {
+func routeTableCRUD(store *state.Store, computeProvider ComputeStorageProvider, networkProvider NetworkProvider, cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			getRouteTable(store)(w, r)
 		case http.MethodPut:
-			putRouteTable(store, computeProvider, cfg)(w, r)
+			putRouteTable(store, computeProvider, networkProvider, cfg)(w, r)
 		case http.MethodDelete:
-			deleteRouteTable(store, computeProvider, cfg)(w, r)
+			deleteRouteTable(store, computeProvider, networkProvider, cfg)(w, r)
 		default:
 			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET, PUT and DELETE are supported", r.URL.Path)
 		}
@@ -134,7 +136,7 @@ func getRouteTable(store *state.Store) http.HandlerFunc {
 	}
 }
 
-func putRouteTable(store *state.Store, computeProvider ComputeStorageProvider, cfg config.Config) http.HandlerFunc {
+func putRouteTable(store *state.Store, computeProvider ComputeStorageProvider, networkProvider NetworkProvider, cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant, workspace, network, name, ok := scopedNetworkNameFromPath(w, r, "route table name is required")
 		if !ok {
@@ -193,6 +195,10 @@ func putRouteTable(store *state.Store, computeProvider ComputeStorageProvider, c
 				return
 			}
 		}
+		if err := syncHetznerNetworkRoutes(ctx, store, computeProvider, networkProvider, tenant, workspace, network, req.Spec.Routes, previousRoutes); err != nil {
+			respondFromError(w, err, r.URL.Path)
+			return
+		}
 		binding, err := store.GetResourceBinding(r.Context(), ref)
 		if err != nil || binding == nil {
 			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to load route table", r.URL.Path)
@@ -207,7 +213,7 @@ func putRouteTable(store *state.Store, computeProvider ComputeStorageProvider, c
 	}
 }
 
-func deleteRouteTable(store *state.Store, computeProvider ComputeStorageProvider, cfg config.Config) http.HandlerFunc {
+func deleteRouteTable(store *state.Store, computeProvider ComputeStorageProvider, networkProvider NetworkProvider, cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant, workspace, network, name, ok := scopedNetworkNameFromPath(w, r, "route table name is required")
 		if !ok {
@@ -241,6 +247,10 @@ func deleteRouteTable(store *state.Store, computeProvider ComputeStorageProvider
 				respondFromError(w, err, r.URL.Path)
 				return
 			}
+		}
+		if err := syncHetznerNetworkRoutes(ctx, store, computeProvider, networkProvider, tenant, workspace, network, nil, payload.Spec.Routes); err != nil {
+			respondFromError(w, err, r.URL.Path)
+			return
 		}
 		respondJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 	}
@@ -301,6 +311,82 @@ func affectedInternetGatewayNames(currentRoutes, previousRoutes []routeTableRout
 	}
 	sort.Strings(out)
 	return out
+}
+
+func syncHetznerNetworkRoutes(
+	ctx context.Context,
+	store *state.Store,
+	computeProvider ComputeStorageProvider,
+	networkProvider NetworkProvider,
+	tenant, workspace, network string,
+	currentRoutes, previousRoutes []routeTableRouteSpec,
+) error {
+	if computeProvider == nil || networkProvider == nil {
+		return nil
+	}
+	current := internetGatewayRouteMap(currentRoutes)
+	previous := internetGatewayRouteMap(previousRoutes)
+
+	for destination, gatewayName := range current {
+		gatewayIP, err := resolveInternetGatewayGatewayIP(ctx, store, computeProvider, tenant, workspace, network, gatewayName)
+		if err != nil {
+			return err
+		}
+		if err := networkProvider.UpsertNetworkRoute(ctx, network, destination, gatewayIP); err != nil {
+			return err
+		}
+	}
+	for destination := range previous {
+		if _, stillPresent := current[destination]; stillPresent {
+			continue
+		}
+		if err := networkProvider.DeleteNetworkRoute(ctx, network, destination); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func internetGatewayRouteMap(routes []routeTableRouteSpec) map[string]string {
+	out := map[string]string{}
+	for _, route := range routes {
+		target := strings.ToLower(strings.TrimSpace(route.TargetRef.Resource))
+		if !strings.HasPrefix(target, "internet-gateways/") {
+			continue
+		}
+		destination := strings.TrimSpace(route.DestinationCidrBlock)
+		gatewayName := strings.ToLower(strings.TrimSpace(resourceNameFromRef(target)))
+		if destination == "" || gatewayName == "" {
+			continue
+		}
+		out[destination] = gatewayName
+	}
+	return out
+}
+
+func resolveInternetGatewayGatewayIP(
+	ctx context.Context,
+	store *state.Store,
+	computeProvider ComputeStorageProvider,
+	tenant, workspace, network, gatewayName string,
+) (string, error) {
+	ref := internetGatewayRef(tenant, workspace, gatewayName)
+	binding, err := store.GetResourceBinding(ctx, ref)
+	if err != nil {
+		return "", err
+	}
+	if binding == nil {
+		return "", hetzner.ProviderError{Code: "not_found", Message: "internet gateway not found"}
+	}
+	payload, err := parseInternetGatewayBinding(binding.ProviderRef)
+	if err != nil {
+		return "", err
+	}
+	instanceName := strings.ToLower(strings.TrimSpace(resourceNameFromRef(payload.ProviderRef)))
+	if instanceName == "" {
+		instanceName = internetGatewayInstanceName(workspace, gatewayName)
+	}
+	return computeProvider.GetInstancePrivateIPv4(ctx, instanceName, network)
 }
 
 func toRouteTableResourceFromBinding(

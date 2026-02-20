@@ -58,6 +58,10 @@ func (f *fakeComputeProvider) SyncInstanceNetworks(_ context.Context, instanceNa
 	return nil
 }
 
+func (f *fakeComputeProvider) GetInstancePrivateIPv4(context.Context, string, string) (string, error) {
+	return "10.10.1.10", nil
+}
+
 func (f *fakeComputeProvider) ListBlockStorages(context.Context) ([]hetzner.BlockStorage, error) {
 	return nil, nil
 }

@@ -37,6 +37,7 @@ type ComputeStorageProvider interface {
 	RestartInstance(ctx context.Context, name string) (bool, string, error)
 	AttachInstanceToNetwork(ctx context.Context, instanceName, networkName string) (bool, string, error)
 	SyncInstanceNetworks(ctx context.Context, instanceName string, networkNames []string) error
+	GetInstancePrivateIPv4(ctx context.Context, instanceName, networkName string) (string, error)
 
 	ListBlockStorages(ctx context.Context) ([]hetzner.BlockStorage, error)
 	GetBlockStorage(ctx context.Context, name string) (*hetzner.BlockStorage, error)
@@ -51,6 +52,8 @@ type NetworkProvider interface {
 	GetNetwork(ctx context.Context, name string) (*hetzner.Network, error)
 	CreateOrUpdateNetwork(ctx context.Context, req hetzner.NetworkCreateRequest) (*hetzner.Network, bool, error)
 	DeleteNetwork(ctx context.Context, name string) (bool, error)
+	UpsertNetworkRoute(ctx context.Context, networkName, destinationCIDR, gatewayIP string) error
+	DeleteNetworkRoute(ctx context.Context, networkName, destinationCIDR string) error
 
 	ListSecurityGroups(ctx context.Context) ([]hetzner.SecurityGroup, error)
 	GetSecurityGroup(ctx context.Context, name string) (*hetzner.SecurityGroup, error)
@@ -237,7 +240,7 @@ func New(
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks", listNetworksProvider(networkProvider, store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{name}", networkCRUDProvider(networkProvider, store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/route-tables", listRouteTables(store))
-	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/route-tables/{name}", routeTableCRUD(store, computeStorageProvider, cfg))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/route-tables/{name}", routeTableCRUD(store, computeStorageProvider, networkProvider, cfg))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/subnets", listSubnets(store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/subnets/{name}", subnetCRUD(store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/nics", listNICs(store))
