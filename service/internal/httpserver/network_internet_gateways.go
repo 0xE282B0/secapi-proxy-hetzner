@@ -9,6 +9,8 @@ import (
 	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/state"
 )
 
+const resourceBindingKindInternetGateway = "internet-gateway"
+
 type internetGatewayIterator struct {
 	Items    []internetGatewayResource `json:"items"`
 	Metadata responseMetaObject        `json:"metadata"`
@@ -29,9 +31,15 @@ type internetGatewayStatusObject struct {
 	State string `json:"state"`
 }
 
+type internetGatewayBindingPayload struct {
+	Name   string               `json:"name"`
+	Region string               `json:"region"`
+	Labels map[string]string    `json:"labels,omitempty"`
+	Spec   internetGatewaySpec  `json:"spec"`
+}
+
 func listInternetGateways(store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// TODO: Replace this in-memory internet-gateway shim with provider-backed implementation.
 		if r.Method != http.MethodGet {
 			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET is supported", r.URL.Path)
 			return
@@ -43,10 +51,18 @@ func listInternetGateways(store *state.Store) http.HandlerFunc {
 		if _, ok := workspaceExecutionContext(w, r, store, tenant, workspace); !ok {
 			return
 		}
-		records := runtimeResourceState.listInternetGatewaysByScope(tenant, workspace)
-		items := make([]internetGatewayResource, 0, len(records))
-		for _, rec := range records {
-			items = append(items, toRuntimeInternetGatewayResource(rec, http.MethodGet, "active"))
+		bindings, err := store.ListResourceBindings(r.Context(), tenant, workspace, resourceBindingKindInternetGateway)
+		if err != nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to list internet gateways", r.URL.Path)
+			return
+		}
+		items := make([]internetGatewayResource, 0, len(bindings))
+		for _, binding := range bindings {
+			payload, err := parseInternetGatewayBinding(binding.ProviderRef)
+			if err != nil {
+				continue
+			}
+			items = append(items, toInternetGatewayResourceFromBinding(binding, payload, tenant, workspace, http.MethodGet, "active"))
 		}
 		respondJSON(w, http.StatusOK, internetGatewayIterator{
 			Items:    items,
@@ -79,12 +95,22 @@ func getInternetGateway(store *state.Store) http.HandlerFunc {
 		if _, ok := workspaceExecutionContext(w, r, store, tenant, workspace); !ok {
 			return
 		}
-		rec, ok := runtimeResourceState.getInternetGateway(internetGatewayRef(tenant, workspace, name))
-		if !ok {
+		ref := internetGatewayRef(tenant, workspace, name)
+		binding, err := store.GetResourceBinding(r.Context(), ref)
+		if err != nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to load internet gateway", r.URL.Path)
+			return
+		}
+		if binding == nil {
 			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "internet gateway not found", r.URL.Path)
 			return
 		}
-		respondJSON(w, http.StatusOK, toRuntimeInternetGatewayResource(rec, http.MethodGet, "active"))
+		payload, err := parseInternetGatewayBinding(binding.ProviderRef)
+		if err != nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "invalid internet gateway payload", r.URL.Path)
+			return
+		}
+		respondJSON(w, http.StatusOK, toInternetGatewayResourceFromBinding(*binding, payload, tenant, workspace, http.MethodGet, "active"))
 	}
 }
 
@@ -103,20 +129,44 @@ func putInternetGateway(store *state.Store) http.HandlerFunc {
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "invalid json body", r.URL.Path)
 			return
 		}
-		region := runtimeRegionOrDefault(req.Metadata.Region)
-		now := time.Now().UTC().Format(time.RFC3339)
-		rec, created := runtimeResourceState.upsertInternetGateway(internetGatewayRef(tenant, workspace, name), internetGatewayRuntimeRecord{
-			Tenant:         tenant,
-			Workspace:      workspace,
-			Name:           name,
-			Region:         region,
-			Labels:         req.Labels,
-			Spec:           req.Spec,
-			CreatedAt:      now,
-			LastModifiedAt: now,
-		})
-		stateValue, code := upsertStateAndCode(created)
-		respondJSON(w, code, toRuntimeInternetGatewayResource(rec, http.MethodPut, stateValue))
+		ref := internetGatewayRef(tenant, workspace, name)
+		existing, err := store.GetResourceBinding(r.Context(), ref)
+		if err != nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to load internet gateway", r.URL.Path)
+			return
+		}
+		payload := internetGatewayBindingPayload{
+			Name:   name,
+			Region: runtimeRegionOrDefault(req.Metadata.Region),
+			Labels: req.Labels,
+			Spec:   req.Spec,
+		}
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to encode internet gateway", r.URL.Path)
+			return
+		}
+		if err := store.UpsertResourceBinding(r.Context(), state.ResourceBinding{
+			Tenant:      tenant,
+			Workspace:   workspace,
+			Kind:        resourceBindingKindInternetGateway,
+			SecaRef:     ref,
+			ProviderRef: string(raw),
+			Status:      "active",
+		}); err != nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to save internet gateway", r.URL.Path)
+			return
+		}
+		binding, err := store.GetResourceBinding(r.Context(), ref)
+		if err != nil || binding == nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to load internet gateway", r.URL.Path)
+			return
+		}
+		stateValue, code := "updating", http.StatusOK
+		if existing == nil {
+			stateValue, code = "creating", http.StatusCreated
+		}
+		respondJSON(w, code, toInternetGatewayResourceFromBinding(*binding, payload, tenant, workspace, http.MethodPut, stateValue))
 	}
 }
 
@@ -129,38 +179,70 @@ func deleteInternetGateway(store *state.Store) http.HandlerFunc {
 		if _, ok := workspaceExecutionContext(w, r, store, tenant, workspace); !ok {
 			return
 		}
-		if _, ok := runtimeResourceState.getInternetGateway(internetGatewayRef(tenant, workspace, name)); !ok {
+		ref := internetGatewayRef(tenant, workspace, name)
+		binding, err := store.GetResourceBinding(r.Context(), ref)
+		if err != nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to load internet gateway", r.URL.Path)
+			return
+		}
+		if binding == nil {
 			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "internet gateway not found", r.URL.Path)
 			return
 		}
-		runtimeResourceState.deleteInternetGateway(internetGatewayRef(tenant, workspace, name))
+		if err := store.DeleteResourceBinding(r.Context(), ref); err != nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to delete internet gateway", r.URL.Path)
+			return
+		}
 		respondJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 	}
 }
 
 func internetGatewayRef(tenant, workspace, name string) string {
-	return strings.ToLower(strings.TrimSpace(tenant)) + "/" + strings.ToLower(strings.TrimSpace(workspace)) + "/" + strings.ToLower(strings.TrimSpace(name))
+	return "seca.network/v1/tenants/" + strings.ToLower(strings.TrimSpace(tenant)) +
+		"/workspaces/" + strings.ToLower(strings.TrimSpace(workspace)) +
+		"/internet-gateways/" + strings.ToLower(strings.TrimSpace(name))
 }
 
-func toRuntimeInternetGatewayResource(rec internetGatewayRuntimeRecord, verb, state string) internetGatewayResource {
+func parseInternetGatewayBinding(raw string) (internetGatewayBindingPayload, error) {
+	var payload internetGatewayBindingPayload
+	err := json.Unmarshal([]byte(raw), &payload)
+	return payload, err
+}
+
+func toInternetGatewayResourceFromBinding(
+	binding state.ResourceBinding,
+	payload internetGatewayBindingPayload,
+	tenant,
+	workspace,
+	verb,
+	stateValue string,
+) internetGatewayResource {
+	createdAt := time.Now().UTC().Format(time.RFC3339)
+	updatedAt := createdAt
+	if !binding.CreatedAt.IsZero() {
+		createdAt = binding.CreatedAt.UTC().Format(time.RFC3339)
+	}
+	if !binding.UpdatedAt.IsZero() {
+		updatedAt = binding.UpdatedAt.UTC().Format(time.RFC3339)
+	}
 	return internetGatewayResource{
 		Metadata: resourceMetadata{
-			Name:            rec.Name,
+			Name:            payload.Name,
 			Provider:        "seca.network/v1",
-			Resource:        "tenants/" + rec.Tenant + "/workspaces/" + rec.Workspace + "/internet-gateways/" + rec.Name,
+			Resource:        "tenants/" + tenant + "/workspaces/" + workspace + "/internet-gateways/" + payload.Name,
 			Verb:            verb,
-			CreatedAt:       rec.CreatedAt,
-			LastModifiedAt:  rec.LastModifiedAt,
-			ResourceVersion: rec.ResourceVersion,
+			CreatedAt:       createdAt,
+			LastModifiedAt:  updatedAt,
+			ResourceVersion: 1,
 			APIVersion:      "v1",
 			Kind:            "internet-gateway",
-			Ref:             "seca.network/v1/tenants/" + rec.Tenant + "/workspaces/" + rec.Workspace + "/internet-gateways/" + rec.Name,
-			Tenant:          rec.Tenant,
-			Workspace:       rec.Workspace,
-			Region:          rec.Region,
+			Ref:             "seca.network/v1/tenants/" + tenant + "/workspaces/" + workspace + "/internet-gateways/" + payload.Name,
+			Tenant:          tenant,
+			Workspace:       workspace,
+			Region:          defaultRegion(strings.ToLower(strings.TrimSpace(payload.Region))),
 		},
-		Labels: rec.Labels,
-		Spec:   rec.Spec,
-		Status: internetGatewayStatusObject{State: state},
+		Labels: payload.Labels,
+		Spec:   payload.Spec,
+		Status: internetGatewayStatusObject{State: stateValue},
 	}
 }

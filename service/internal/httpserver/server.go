@@ -237,13 +237,10 @@ func New(
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/nics/{name}", nicCRUD(store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/public-ips", listPublicIPs(store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/public-ips/{name}", publicIPCRUD(store))
-	if cfg.ConformanceMode {
-		// TODO: Replace these in-memory network handlers with provider-backed handlers.
-		publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/security-groups", listSecurityGroups(store))
-		publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/security-groups/{name}", securityGroupCRUD(store))
-		publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/internet-gateways", listInternetGateways(store))
-		publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/internet-gateways/{name}", internetGatewayCRUD(store))
-	}
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/security-groups", listSecurityGroups(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/security-groups/{name}", securityGroupCRUD(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/internet-gateways", listInternetGateways(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/internet-gateways/{name}", internetGatewayCRUD(store))
 	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/images", listImages(catalogProvider))
 	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/images/{name}", imageCRUD(catalogProvider, cfg.ConformanceMode))
 	publicMux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances", listInstances(computeStorageProvider, store))
