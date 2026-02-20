@@ -530,8 +530,8 @@ func (s *RegionService) CreateOrUpdateBlockStorage(ctx context.Context, req Bloc
 	}
 
 	createOpts := hcloud.VolumeCreateOpts{
-		Name: req.Name,
-		Size: req.SizeGB,
+		Name:   req.Name,
+		Size:   req.SizeGB,
 		Labels: req.Labels,
 	}
 	if req.AttachTo != "" {
@@ -712,6 +712,47 @@ func (s *RegionService) DetachBlockStorage(ctx context.Context, name string) (bo
 		return false, "", err
 	}
 	return true, fmt.Sprintf("%d", action.ID), nil
+}
+
+func (s *RegionService) AttachInstanceToNetwork(ctx context.Context, instanceName, networkName string) (bool, string, error) {
+	if !s.configured {
+		return false, "", ErrNotConfigured
+	}
+	server, _, err := s.clientFor(ctx).Server.GetByName(ctx, strings.TrimSpace(instanceName))
+	if err != nil {
+		return false, "", err
+	}
+	if server == nil {
+		return false, "", notFoundError(fmt.Sprintf("instance %q not found", instanceName))
+	}
+	network, _, err := s.clientFor(ctx).Network.GetByName(ctx, strings.TrimSpace(networkName))
+	if err != nil {
+		return false, "", err
+	}
+	if network == nil {
+		return false, "", notFoundError(fmt.Sprintf("network %q not found", networkName))
+	}
+
+	for _, privateNet := range server.PrivateNet {
+		if privateNet.Network != nil && privateNet.Network.ID == network.ID {
+			return true, "", nil
+		}
+	}
+
+	action, _, err := s.clientFor(ctx).Server.AttachToNetwork(ctx, server, hcloud.ServerAttachToNetworkOpts{Network: network})
+	if err != nil {
+		var apiErr hcloud.Error
+		if errors.As(err, &apiErr) && apiErr.Code == hcloud.ErrorCodeServerAlreadyAttached {
+			return true, "", nil
+		}
+		return false, "", err
+	}
+
+	actionID := ""
+	if action != nil {
+		actionID = fmt.Sprintf("%d", action.ID)
+	}
+	return true, actionID, nil
 }
 
 func (s *RegionService) getServerByName(ctx context.Context, name string) (*hcloud.Server, error) {
