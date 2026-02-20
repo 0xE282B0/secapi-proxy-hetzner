@@ -319,6 +319,7 @@ func reconcileInternetGatewayProvider(
 		SKUName:   "cax11",
 		ImageName: "ubuntu-24.04",
 		Region:    region,
+		UserData:  internetGatewayNATCloudInit(payload),
 		Labels: withSecaProviderLabels(
 			payload.Labels,
 			tenant,
@@ -339,6 +340,53 @@ func reconcileInternetGatewayProvider(
 		return "", fmt.Errorf("internet-gateway instance %q not found after create", instanceName)
 	}
 	return fmt.Sprintf("instances/%s", instance.Name), nil
+}
+
+func internetGatewayNATCloudInit(payload internetGatewayBindingPayload) string {
+	egressOnly := true
+	if payload.Spec.EgressOnly != nil {
+		egressOnly = *payload.Spec.EgressOnly
+	}
+	egressMarker := "true"
+	if !egressOnly {
+		egressMarker = "false"
+	}
+
+	return fmt.Sprintf(`#cloud-config
+write_files:
+  - path: /usr/local/sbin/seca-igw-init.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      # TODO: bind NAT to resolved SECA network attachments once IGW->network
+      # reconciliation is provider-backed.
+      EGRESS_IFACE="$(ip -4 route show default | awk '/default/ {print $5; exit}')"
+      if [[ -z "${EGRESS_IFACE}" ]]; then
+        exit 0
+      fi
+
+      sysctl -w net.ipv4.ip_forward=1
+      cat >/etc/sysctl.d/99-seca-igw.conf <<'EOF'
+      net.ipv4.ip_forward=1
+      EOF
+      sysctl -p /etc/sysctl.d/99-seca-igw.conf
+
+      # Basic SNAT for private ranges through default egress.
+      iptables -t nat -C POSTROUTING -o "${EGRESS_IFACE}" -j MASQUERADE 2>/dev/null || \
+        iptables -t nat -A POSTROUTING -o "${EGRESS_IFACE}" -j MASQUERADE
+      iptables -C FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+        iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+      iptables -C FORWARD -i "${EGRESS_IFACE}" -j ACCEPT 2>/dev/null || \
+        iptables -A FORWARD -i "${EGRESS_IFACE}" -j ACCEPT
+      iptables -C FORWARD -o "${EGRESS_IFACE}" -j ACCEPT 2>/dev/null || \
+        iptables -A FORWARD -o "${EGRESS_IFACE}" -j ACCEPT
+
+runcmd:
+  - [bash, -lc, "/usr/local/sbin/seca-igw-init.sh"]
+final_message: "SECA internet-gateway init complete (egressOnly=%s)"
+`, egressMarker)
 }
 
 func internetGatewayInstanceName(workspace, gatewayName string) string {
