@@ -35,6 +35,7 @@ type securityGroupStatusObj struct {
 
 func listSecurityGroups(store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// TODO: Replace this in-memory security-group shim with provider-backed implementation.
 		if r.Method != http.MethodGet {
 			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET is supported", r.URL.Path)
 			return
@@ -105,10 +106,7 @@ func putSecurityGroup(store *state.Store) http.HandlerFunc {
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "invalid json body", r.URL.Path)
 			return
 		}
-		region := strings.TrimSpace(req.Metadata.Region)
-		if region == "" {
-			region = "global"
-		}
+		region := runtimeRegionOrDefault(req.Metadata.Region)
 		now := time.Now().UTC().Format(time.RFC3339)
 		rec, created := runtimeResourceState.upsertSecurityGroup(securityGroupRef(tenant, workspace, name), securityGroupRuntimeRecord{
 			Tenant:         tenant,
@@ -120,12 +118,7 @@ func putSecurityGroup(store *state.Store) http.HandlerFunc {
 			CreatedAt:      now,
 			LastModifiedAt: now,
 		})
-		stateValue := "updating"
-		code := http.StatusOK
-		if created {
-			stateValue = "creating"
-			code = http.StatusCreated
-		}
+		stateValue, code := upsertStateAndCode(created)
 		respondJSON(w, code, toRuntimeSecurityGroupResource(rec, http.MethodPut, stateValue))
 	}
 }

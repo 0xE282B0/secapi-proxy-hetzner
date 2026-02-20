@@ -40,6 +40,7 @@ type networkStatusObject struct {
 
 func listNetworks(store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// TODO: Replace this in-memory network shim with provider-backed implementation.
 		if r.Method != http.MethodGet {
 			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET is supported", r.URL.Path)
 			return
@@ -115,10 +116,7 @@ func putNetwork(store *state.Store) http.HandlerFunc {
 			return
 		}
 
-		region := strings.TrimSpace(req.Metadata.Region)
-		if region == "" {
-			region = "global"
-		}
+		region := runtimeRegionOrDefault(req.Metadata.Region)
 		now := time.Now().UTC().Format(time.RFC3339)
 		rec, created := runtimeResourceState.upsertNetwork(networkRef(tenant, workspace, name), networkRuntimeRecord{
 			Tenant:         tenant,
@@ -131,12 +129,7 @@ func putNetwork(store *state.Store) http.HandlerFunc {
 			LastModifiedAt: now,
 		})
 
-		stateValue := "updating"
-		code := http.StatusOK
-		if created {
-			stateValue = "creating"
-			code = http.StatusCreated
-		}
+		stateValue, code := upsertStateAndCode(created)
 		respondJSON(w, code, toRuntimeNetworkResource(rec, http.MethodPut, stateValue))
 	}
 }

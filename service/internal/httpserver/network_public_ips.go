@@ -32,6 +32,7 @@ type publicIPStatusObject struct {
 
 func listPublicIPs(store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// TODO: Replace this in-memory public-ip shim with provider-backed implementation.
 		if r.Method != http.MethodGet {
 			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET is supported", r.URL.Path)
 			return
@@ -106,10 +107,7 @@ func putPublicIP(store *state.Store) http.HandlerFunc {
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "spec.version is required", r.URL.Path)
 			return
 		}
-		region := strings.TrimSpace(req.Metadata.Region)
-		if region == "" {
-			region = "global"
-		}
+		region := runtimeRegionOrDefault(req.Metadata.Region)
 		now := time.Now().UTC().Format(time.RFC3339)
 		rec, created := runtimeResourceState.upsertPublicIP(publicIPRef(tenant, workspace, name), publicIPRuntimeRecord{
 			Tenant:         tenant,
@@ -121,12 +119,7 @@ func putPublicIP(store *state.Store) http.HandlerFunc {
 			CreatedAt:      now,
 			LastModifiedAt: now,
 		})
-		stateValue := "updating"
-		code := http.StatusOK
-		if created {
-			stateValue = "creating"
-			code = http.StatusCreated
-		}
+		stateValue, code := upsertStateAndCode(created)
 		respondJSON(w, code, toRuntimePublicIPResource(rec, http.MethodPut, stateValue))
 	}
 }
