@@ -26,6 +26,8 @@ type ResourceBinding struct {
 	SecaRef     string
 	ProviderRef string
 	Status      string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type OperationRecord struct {
@@ -121,6 +123,8 @@ func (s *Store) GetResourceBinding(ctx context.Context, secaRef string) (*Resour
 		SecaRef:     row.SecaRef,
 		ProviderRef: row.ProviderRef,
 		Status:      row.Status,
+		CreatedAt:   row.CreatedAt.Time,
+		UpdatedAt:   row.UpdatedAt.Time,
 	}, nil
 }
 
@@ -140,6 +144,8 @@ func (s *Store) ListResourceBindings(ctx context.Context, tenant, workspace, kin
 			SecaRef:     row.SecaRef,
 			ProviderRef: row.ProviderRef,
 			Status:      row.Status,
+			CreatedAt:   row.CreatedAt.Time,
+			UpdatedAt:   row.UpdatedAt.Time,
 		})
 	}
 	return out, nil

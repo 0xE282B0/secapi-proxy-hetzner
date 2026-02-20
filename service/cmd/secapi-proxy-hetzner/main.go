@@ -34,7 +34,8 @@ func main() {
 	defer store.Close()
 
 	regionService := hetzner.NewRegionService(cfg)
-	servers := httpserver.New(cfg, store, regionService, regionService, regionService)
+	servers := httpserver.New(cfg, store, regionService, regionService, regionService, regionService)
+	log.Printf("runtime mode: conformance=%t (SECA_CONFORMANCE_MODE)", cfg.ConformanceMode)
 
 	go func() {
 		log.Printf("starting secapi-proxy-hetzner public api on %s", cfg.ListenAddr)

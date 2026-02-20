@@ -44,6 +44,13 @@ type ComputeStorageProvider interface {
 	DetachBlockStorage(ctx context.Context, name string) (bool, string, error)
 }
 
+type NetworkProvider interface {
+	ListNetworks(ctx context.Context) ([]hetzner.Network, error)
+	GetNetwork(ctx context.Context, name string) (*hetzner.Network, error)
+	CreateOrUpdateNetwork(ctx context.Context, req hetzner.NetworkCreateRequest) (*hetzner.Network, bool, error)
+	DeleteNetwork(ctx context.Context, name string) (bool, error)
+}
+
 type statusResponse struct {
 	Status string `json:"status"`
 }
@@ -194,7 +201,14 @@ type Servers struct {
 	Admin  *http.Server
 }
 
-func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, catalogProvider CatalogProvider, computeStorageProvider ComputeStorageProvider) Servers {
+func New(
+	cfg config.Config,
+	store *state.Store,
+	regionProvider RegionProvider,
+	catalogProvider CatalogProvider,
+	computeStorageProvider ComputeStorageProvider,
+	networkProvider NetworkProvider,
+) Servers {
 	publicMux := http.NewServeMux()
 	publicMux.HandleFunc("/healthz", healthz)
 	publicMux.HandleFunc("/readyz", readyz(store))
@@ -213,12 +227,12 @@ func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, c
 	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/skus/{name}", getStorageSKU())
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/skus", listNetworkSKUs())
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/skus/{name}", getNetworkSKU())
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks", listNetworksProvider(networkProvider, store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{name}", networkCRUDProvider(networkProvider, store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/route-tables", listRouteTables(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/route-tables/{name}", routeTableCRUD(store))
 	if cfg.ConformanceMode {
 		// TODO: Replace these in-memory network handlers with provider-backed handlers.
-		publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks", listNetworks(store))
-		publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{name}", networkCRUD(store))
-		publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/route-tables", listRouteTables(store))
-		publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/route-tables/{name}", routeTableCRUD(store))
 		publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/subnets", listSubnets(store))
 		publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/subnets/{name}", subnetCRUD(store))
 		publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/public-ips", listPublicIPs(store))
