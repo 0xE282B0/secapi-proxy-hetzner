@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -206,7 +205,6 @@ func getSecurityGroup(provider NetworkProvider, store *state.Store) http.Handler
 		if binding != nil {
 			outBinding = *binding
 		}
-		slog.Info("security-group get response", "tenant", tenant, "workspace", workspace, "name", name, "binding_found", binding != nil, "provider_rules_len", len(item.Rules), "response_rules_len", len(payload.Spec.Rules))
 		respondJSON(w, http.StatusOK, toSecurityGroupResourceFromBinding(outBinding, payload, tenant, workspace, http.MethodGet, "active"))
 	}
 }
@@ -226,7 +224,6 @@ func putSecurityGroup(provider NetworkProvider, store *state.Store) http.Handler
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "invalid json body", r.URL.Path)
 			return
 		}
-		slog.Info("security-group put decoded", "tenant", tenant, "workspace", workspace, "name", name, "req_rules_len", len(req.Spec.Rules))
 
 		item, created, err := provider.CreateOrUpdateSecurityGroup(ctx, hetzner.SecurityGroupCreateRequest{
 			Name:   name,
