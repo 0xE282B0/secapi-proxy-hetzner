@@ -81,6 +81,7 @@ type resourceMetadata struct {
 	Ref             string `json:"ref"`
 	Tenant          string `json:"tenant,omitempty"`
 	Workspace       string `json:"workspace,omitempty"`
+	Network         string `json:"network,omitempty"`
 	Region          string `json:"region,omitempty"`
 }
 
@@ -127,12 +128,18 @@ type imageIterator struct {
 
 type imageResource struct {
 	Metadata resourceMetadata `json:"metadata"`
+	Labels   map[string]string `json:"labels,omitempty"`
 	Spec     imageSpec        `json:"spec"`
+	Status   imageStatus      `json:"status"`
 }
 
 type imageSpec struct {
 	BlockStorageRef refObject `json:"blockStorageRef"`
 	CPUArchitecture string    `json:"cpuArchitecture"`
+}
+
+type imageStatus struct {
+	State string `json:"state"`
 }
 
 type refObject struct {
@@ -206,8 +213,22 @@ func New(cfg config.Config, store *state.Store, regionProvider RegionProvider, c
 	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/skus/{name}", getStorageSKU())
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/skus", listNetworkSKUs())
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/skus/{name}", getNetworkSKU())
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks", listNetworks(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{name}", networkCRUD(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/route-tables", listRouteTables(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/route-tables/{name}", routeTableCRUD(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/subnets", listSubnets(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/subnets/{name}", subnetCRUD(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/public-ips", listPublicIPs(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/public-ips/{name}", publicIPCRUD(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/nics", listNICs(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/nics/{name}", nicCRUD(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/security-groups", listSecurityGroups(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/security-groups/{name}", securityGroupCRUD(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/internet-gateways", listInternetGateways(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/internet-gateways/{name}", internetGatewayCRUD(store))
 	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/images", listImages(catalogProvider))
-	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/images/{name}", getImage(catalogProvider))
+	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/images/{name}", imageCRUD(catalogProvider, cfg.ConformanceMode))
 	publicMux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances", listInstances(computeStorageProvider, store))
 	publicMux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}", instanceCRUD(computeStorageProvider, store))
 	publicMux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/start", startInstance(computeStorageProvider, store))
@@ -533,24 +554,62 @@ func listImages(catalogProvider CatalogProvider) http.HandlerFunc {
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		items := make([]imageResource, 0, len(images))
+		items := make([]imageResource, 0, len(images)+8)
+		for _, rec := range runtimeResourceState.listImagesByTenant(tenant) {
+			items = append(items, toRuntimeImageResource(rec, http.MethodGet, "active"))
+		}
 		for _, img := range images {
-			items = append(items, imageResource{Metadata: resourceMetadata{Name: img.Name, Provider: "seca.storage/v1", Resource: "tenants/" + tenant + "/images/" + img.Name, Verb: http.MethodGet, CreatedAt: now, LastModifiedAt: now, ResourceVersion: 1, APIVersion: "v1", Kind: "image", Ref: "seca.storage/v1/tenants/" + tenant + "/images/" + img.Name, Tenant: tenant, Region: "global"}, Spec: imageSpec{BlockStorageRef: refObject{Resource: "block-storages/" + img.Name}, CPUArchitecture: normalizeArchitecture(img.Architecture)}})
+			if _, exists := runtimeResourceState.getImage(imageRef(tenant, img.Name)); exists {
+				continue
+			}
+			items = append(items, imageResource{
+				Metadata: resourceMetadata{
+					Name:            img.Name,
+					Provider:        "seca.storage/v1",
+					Resource:        "tenants/" + tenant + "/images/" + img.Name,
+					Verb:            http.MethodGet,
+					CreatedAt:       now,
+					LastModifiedAt:  now,
+					ResourceVersion: 1,
+					APIVersion:      "v1",
+					Kind:            "image",
+					Ref:             "seca.storage/v1/tenants/" + tenant + "/images/" + img.Name,
+					Tenant:          tenant,
+					Region:          "global",
+				},
+				Spec:   imageSpec{BlockStorageRef: refObject{Resource: "block-storages/" + img.Name}, CPUArchitecture: normalizeArchitecture(img.Architecture)},
+				Status: imageStatus{State: "active"},
+			})
 		}
 		respondJSON(w, http.StatusOK, imageIterator{Items: items, Metadata: responseMetaObject{Provider: "seca.storage/v1", Resource: "tenants/" + tenant + "/images", Verb: http.MethodGet}})
 	}
 }
 
+func imageCRUD(catalogProvider CatalogProvider, conformanceMode bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			getImage(catalogProvider)(w, r)
+		case http.MethodPut:
+			putImage(conformanceMode)(w, r)
+		case http.MethodDelete:
+			deleteImage(conformanceMode)(w, r)
+		default:
+			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET, PUT and DELETE are supported", r.URL.Path)
+		}
+	}
+}
+
 func getImage(catalogProvider CatalogProvider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET is supported", r.URL.Path)
-			return
-		}
 		tenant := r.PathValue("tenant")
 		name := strings.ToLower(r.PathValue("name"))
 		if tenant == "" || name == "" {
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "tenant and image name are required", r.URL.Path)
+			return
+		}
+		if rec, ok := runtimeResourceState.getImage(imageRef(tenant, name)); ok {
+			respondJSON(w, http.StatusOK, toRuntimeImageResource(rec, http.MethodGet, "active"))
 			return
 		}
 		img, err := catalogProvider.GetCatalogImage(r.Context(), name)
@@ -563,7 +622,118 @@ func getImage(catalogProvider CatalogProvider) http.HandlerFunc {
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		respondJSON(w, http.StatusOK, imageResource{Metadata: resourceMetadata{Name: img.Name, Provider: "seca.storage/v1", Resource: "tenants/" + tenant + "/images/" + img.Name, Verb: http.MethodGet, CreatedAt: now, LastModifiedAt: now, ResourceVersion: 1, APIVersion: "v1", Kind: "image", Ref: "seca.storage/v1/tenants/" + tenant + "/images/" + img.Name, Tenant: tenant, Region: "global"}, Spec: imageSpec{BlockStorageRef: refObject{Resource: "block-storages/" + img.Name}, CPUArchitecture: normalizeArchitecture(img.Architecture)}})
+		respondJSON(w, http.StatusOK, imageResource{
+			Metadata: resourceMetadata{
+				Name:            img.Name,
+				Provider:        "seca.storage/v1",
+				Resource:        "tenants/" + tenant + "/images/" + img.Name,
+				Verb:            http.MethodGet,
+				CreatedAt:       now,
+				LastModifiedAt:  now,
+				ResourceVersion: 1,
+				APIVersion:      "v1",
+				Kind:            "image",
+				Ref:             "seca.storage/v1/tenants/" + tenant + "/images/" + img.Name,
+				Tenant:          tenant,
+				Region:          "global",
+			},
+			Spec:   imageSpec{BlockStorageRef: refObject{Resource: "block-storages/" + img.Name}, CPUArchitecture: normalizeArchitecture(img.Architecture)},
+			Status: imageStatus{State: "active"},
+		})
+	}
+}
+
+func putImage(conformanceMode bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !conformanceMode {
+			respondProblem(w, http.StatusNotImplemented, "http://secapi.cloud/errors/not-implemented", "Not Implemented", "image upload workflow is not implemented", r.URL.Path)
+			return
+		}
+		tenant := r.PathValue("tenant")
+		name := strings.ToLower(r.PathValue("name"))
+		if tenant == "" || name == "" {
+			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "tenant and image name are required", r.URL.Path)
+			return
+		}
+		var req imageResource
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "invalid json body", r.URL.Path)
+			return
+		}
+		if strings.TrimSpace(req.Spec.BlockStorageRef.Resource) == "" {
+			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "spec.blockStorageRef is required", r.URL.Path)
+			return
+		}
+		cpuArch := normalizeArchitecture(req.Spec.CPUArchitecture)
+		region := strings.TrimSpace(req.Metadata.Region)
+		if region == "" {
+			region = "global"
+		}
+
+		now := time.Now().UTC().Format(time.RFC3339)
+		rec, created := runtimeResourceState.upsertImage(imageRef(tenant, name), imageRuntimeRecord{
+			Tenant:         tenant,
+			Name:           name,
+			Region:         region,
+			Labels:         req.Labels,
+			Spec:           imageSpec{BlockStorageRef: req.Spec.BlockStorageRef, CPUArchitecture: cpuArch},
+			CreatedAt:      now,
+			LastModifiedAt: now,
+		})
+		stateValue := "updating"
+		code := http.StatusOK
+		if created {
+			stateValue = "creating"
+			code = http.StatusCreated
+		}
+		respondJSON(w, code, toRuntimeImageResource(rec, http.MethodPut, stateValue))
+	}
+}
+
+func deleteImage(conformanceMode bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !conformanceMode {
+			respondProblem(w, http.StatusNotImplemented, "http://secapi.cloud/errors/not-implemented", "Not Implemented", "image upload workflow is not implemented", r.URL.Path)
+			return
+		}
+		tenant := r.PathValue("tenant")
+		name := strings.ToLower(r.PathValue("name"))
+		if tenant == "" || name == "" {
+			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "tenant and image name are required", r.URL.Path)
+			return
+		}
+		if _, ok := runtimeResourceState.getImage(imageRef(tenant, name)); !ok {
+			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "image not found", r.URL.Path)
+			return
+		}
+		runtimeResourceState.deleteImage(imageRef(tenant, name))
+		respondJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+	}
+}
+
+func imageRef(tenant, name string) string {
+	return strings.ToLower(strings.TrimSpace(tenant)) + "/" + strings.ToLower(strings.TrimSpace(name))
+}
+
+func toRuntimeImageResource(rec imageRuntimeRecord, verb, state string) imageResource {
+	return imageResource{
+		Metadata: resourceMetadata{
+			Name:            rec.Name,
+			Provider:        "seca.storage/v1",
+			Resource:        "tenants/" + rec.Tenant + "/images/" + rec.Name,
+			Verb:            verb,
+			CreatedAt:       rec.CreatedAt,
+			LastModifiedAt:  rec.LastModifiedAt,
+			ResourceVersion: rec.ResourceVersion,
+			APIVersion:      "v1",
+			Kind:            "image",
+			Ref:             "seca.storage/v1/tenants/" + rec.Tenant + "/images/" + rec.Name,
+			Tenant:          rec.Tenant,
+			Region:          rec.Region,
+		},
+		Labels: rec.Labels,
+		Spec:   rec.Spec,
+		Status: imageStatus{State: state},
 	}
 }
 

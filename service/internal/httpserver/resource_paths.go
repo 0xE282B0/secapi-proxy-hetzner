@@ -34,6 +34,24 @@ func scopedNameFromPath(w http.ResponseWriter, r *http.Request, nameErr string) 
 	return tenant, workspace, name, true
 }
 
+func scopedNetworkNameFromPath(w http.ResponseWriter, r *http.Request, nameErr string) (string, string, string, string, bool) {
+	tenant, workspace, ok := scopeFromPath(w, r)
+	if !ok {
+		return "", "", "", "", false
+	}
+	network := strings.ToLower(r.PathValue("network"))
+	if network == "" {
+		respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "network name is required", r.URL.Path)
+		return "", "", "", "", false
+	}
+	name := strings.ToLower(r.PathValue("name"))
+	if name == "" {
+		respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", nameErr, r.URL.Path)
+		return "", "", "", "", false
+	}
+	return tenant, workspace, network, name, true
+}
+
 func workspaceExecutionContext(w http.ResponseWriter, r *http.Request, store *state.Store, tenant, workspace string) (context.Context, bool) {
 	ws, err := store.GetWorkspace(r.Context(), tenant, workspace)
 	if err != nil {
