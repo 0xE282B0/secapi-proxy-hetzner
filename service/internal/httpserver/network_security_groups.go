@@ -2,10 +2,12 @@ package httpserver
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/provider/hetzner"
 	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/state"
 )
 
@@ -42,7 +44,7 @@ type securityGroupBindingPayload struct {
 	Spec   securityGroupSpec     `json:"spec"`
 }
 
-func listSecurityGroups(store *state.Store) http.HandlerFunc {
+func listSecurityGroups(provider NetworkProvider, store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET is supported", r.URL.Path)
@@ -52,7 +54,18 @@ func listSecurityGroups(store *state.Store) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if _, ok := workspaceExecutionContext(w, r, store, tenant, workspace); !ok {
+		workspaceRegion, ok := workspaceRegionOrDefault(r.Context(), store, tenant, workspace)
+		if !ok {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to resolve workspace", r.URL.Path)
+			return
+		}
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
+			return
+		}
+		itemsFromProvider, err := provider.ListSecurityGroups(ctx)
+		if err != nil {
+			respondFromError(w, err, r.URL.Path)
 			return
 		}
 		bindings, err := store.ListResourceBindings(r.Context(), tenant, workspace, resourceBindingKindSecurityGroup)
@@ -60,11 +73,42 @@ func listSecurityGroups(store *state.Store) http.HandlerFunc {
 			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to list security groups", r.URL.Path)
 			return
 		}
-		items := make([]securityGroupResource, 0, len(bindings))
+		bindingsByName := make(map[string]state.ResourceBinding, len(bindings))
 		for _, binding := range bindings {
-			payload, err := parseSecurityGroupBinding(binding.ProviderRef)
-			if err != nil {
-				continue
+			name := strings.TrimSpace(resourceNameFromRef(binding.SecaRef))
+			if name != "" {
+				bindingsByName[strings.ToLower(name)] = binding
+			}
+		}
+		items := make([]securityGroupResource, 0, len(itemsFromProvider))
+		for _, item := range itemsFromProvider {
+			payload := securityGroupBindingPayload{
+				Name:   item.Name,
+				Region: workspaceRegion,
+				Labels: item.Labels,
+				Spec:   securityGroupSpec{Rules: toSecurityGroupRuleSpecs(item.Rules)},
+			}
+			binding, hasBinding := bindingsByName[item.Name]
+			if hasBinding {
+				parsed, err := parseSecurityGroupBinding(binding.ProviderRef)
+				if err == nil {
+					payload = parsed
+				}
+			}
+			if len(payload.Labels) == 0 {
+				payload.Labels = item.Labels
+			}
+			if len(payload.Spec.Rules) == 0 {
+				payload.Spec.Rules = toSecurityGroupRuleSpecs(item.Rules)
+			}
+			if payload.Region == "" {
+				payload.Region = workspaceRegion
+			}
+			if !hasBinding {
+				binding = state.ResourceBinding{
+					CreatedAt: item.CreatedAt,
+					UpdatedAt: item.CreatedAt,
+				}
 			}
 			items = append(items, toSecurityGroupResourceFromBinding(binding, payload, tenant, workspace, http.MethodGet, "active"))
 		}
@@ -75,28 +119,43 @@ func listSecurityGroups(store *state.Store) http.HandlerFunc {
 	}
 }
 
-func securityGroupCRUD(store *state.Store) http.HandlerFunc {
+func securityGroupCRUD(provider NetworkProvider, store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			getSecurityGroup(store)(w, r)
+			getSecurityGroup(provider, store)(w, r)
 		case http.MethodPut:
-			putSecurityGroup(store)(w, r)
+			putSecurityGroup(provider, store)(w, r)
 		case http.MethodDelete:
-			deleteSecurityGroup(store)(w, r)
+			deleteSecurityGroup(provider, store)(w, r)
 		default:
 			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET, PUT and DELETE are supported", r.URL.Path)
 		}
 	}
 }
 
-func getSecurityGroup(store *state.Store) http.HandlerFunc {
+func getSecurityGroup(provider NetworkProvider, store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant, workspace, name, ok := scopedNameFromPath(w, r, "security group name is required")
 		if !ok {
 			return
 		}
-		if _, ok := workspaceExecutionContext(w, r, store, tenant, workspace); !ok {
+		workspaceRegion, ok := workspaceRegionOrDefault(r.Context(), store, tenant, workspace)
+		if !ok {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to resolve workspace", r.URL.Path)
+			return
+		}
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
+			return
+		}
+		item, err := provider.GetSecurityGroup(ctx, name)
+		if err != nil {
+			respondFromError(w, err, r.URL.Path)
+			return
+		}
+		if item == nil {
+			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "security group not found", r.URL.Path)
 			return
 		}
 		ref := securityGroupRef(tenant, workspace, name)
@@ -106,25 +165,60 @@ func getSecurityGroup(store *state.Store) http.HandlerFunc {
 			return
 		}
 		if binding == nil {
-			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "security group not found", r.URL.Path)
-			return
+			bindings, listErr := store.ListResourceBindings(r.Context(), tenant, workspace, resourceBindingKindSecurityGroup)
+			if listErr != nil {
+				respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to load security group", r.URL.Path)
+				return
+			}
+			for i := range bindings {
+				b := bindings[i]
+				payload, parseErr := parseSecurityGroupBinding(b.ProviderRef)
+				if parseErr == nil && strings.EqualFold(strings.TrimSpace(payload.Name), name) {
+					binding = &b
+					break
+				}
+			}
 		}
-		payload, err := parseSecurityGroupBinding(binding.ProviderRef)
-		if err != nil {
-			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "invalid security group payload", r.URL.Path)
-			return
+		payload := securityGroupBindingPayload{
+			Name:   item.Name,
+			Region: workspaceRegion,
+			Labels: item.Labels,
+			Spec:   securityGroupSpec{Rules: toSecurityGroupRuleSpecs(item.Rules)},
 		}
-		respondJSON(w, http.StatusOK, toSecurityGroupResourceFromBinding(*binding, payload, tenant, workspace, http.MethodGet, "active"))
+		if binding != nil {
+			parsedPayload, parseErr := parseSecurityGroupBinding(binding.ProviderRef)
+			if parseErr != nil {
+				respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "invalid security group payload", r.URL.Path)
+				return
+			}
+			payload = parsedPayload
+			if len(payload.Labels) == 0 {
+				payload.Labels = item.Labels
+			}
+			if len(payload.Spec.Rules) == 0 {
+				payload.Spec.Rules = toSecurityGroupRuleSpecs(item.Rules)
+			}
+			if payload.Region == "" {
+				payload.Region = workspaceRegion
+			}
+		}
+		outBinding := state.ResourceBinding{CreatedAt: item.CreatedAt, UpdatedAt: item.CreatedAt}
+		if binding != nil {
+			outBinding = *binding
+		}
+		slog.Info("security-group get response", "tenant", tenant, "workspace", workspace, "name", name, "binding_found", binding != nil, "provider_rules_len", len(item.Rules), "response_rules_len", len(payload.Spec.Rules))
+		respondJSON(w, http.StatusOK, toSecurityGroupResourceFromBinding(outBinding, payload, tenant, workspace, http.MethodGet, "active"))
 	}
 }
 
-func putSecurityGroup(store *state.Store) http.HandlerFunc {
+func putSecurityGroup(provider NetworkProvider, store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant, workspace, name, ok := scopedNameFromPath(w, r, "security group name is required")
 		if !ok {
 			return
 		}
-		if _, ok := workspaceExecutionContext(w, r, store, tenant, workspace); !ok {
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
 			return
 		}
 		var req securityGroupResource
@@ -132,17 +226,36 @@ func putSecurityGroup(store *state.Store) http.HandlerFunc {
 			respondProblem(w, http.StatusBadRequest, "http://secapi.cloud/errors/invalid-request", "Bad Request", "invalid json body", r.URL.Path)
 			return
 		}
+		slog.Info("security-group put decoded", "tenant", tenant, "workspace", workspace, "name", name, "req_rules_len", len(req.Spec.Rules))
+
+		item, created, err := provider.CreateOrUpdateSecurityGroup(ctx, hetzner.SecurityGroupCreateRequest{
+			Name:   name,
+			Labels: req.Labels,
+		})
+		if err != nil {
+			respondFromError(w, err, r.URL.Path)
+			return
+		}
+		if item == nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal-server-error", "Internal Server Error", "provider returned empty security group", r.URL.Path)
+			return
+		}
+
 		ref := securityGroupRef(tenant, workspace, name)
 		existing, err := store.GetResourceBinding(r.Context(), ref)
 		if err != nil {
 			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to load security group", r.URL.Path)
 			return
 		}
+
 		payload := securityGroupBindingPayload{
 			Name:   name,
 			Region: runtimeRegionOrDefault(req.Metadata.Region),
 			Labels: req.Labels,
 			Spec:   req.Spec,
+		}
+		if payload.Region == "" {
+			payload.Region = "global"
 		}
 		raw, err := json.Marshal(payload)
 		if err != nil {
@@ -165,33 +278,34 @@ func putSecurityGroup(store *state.Store) http.HandlerFunc {
 			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to load security group", r.URL.Path)
 			return
 		}
-		stateValue, code := "updating", http.StatusOK
-		if existing == nil {
-			stateValue, code = "creating", http.StatusCreated
+		stateValue, code := upsertStateAndCode(created)
+		if existing != nil && created {
+			stateValue, code = "updating", http.StatusOK
 		}
 		respondJSON(w, code, toSecurityGroupResourceFromBinding(*binding, payload, tenant, workspace, http.MethodPut, stateValue))
 	}
 }
 
-func deleteSecurityGroup(store *state.Store) http.HandlerFunc {
+func deleteSecurityGroup(provider NetworkProvider, store *state.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant, workspace, name, ok := scopedNameFromPath(w, r, "security group name is required")
 		if !ok {
 			return
 		}
-		if _, ok := workspaceExecutionContext(w, r, store, tenant, workspace); !ok {
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
 			return
 		}
-		ref := securityGroupRef(tenant, workspace, name)
-		binding, err := store.GetResourceBinding(r.Context(), ref)
+		deleted, err := provider.DeleteSecurityGroup(ctx, name)
 		if err != nil {
-			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to load security group", r.URL.Path)
+			respondFromError(w, err, r.URL.Path)
 			return
 		}
-		if binding == nil {
+		if !deleted {
 			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "security group not found", r.URL.Path)
 			return
 		}
+		ref := securityGroupRef(tenant, workspace, name)
 		if err := store.DeleteResourceBinding(r.Context(), ref); err != nil {
 			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to delete security group", r.URL.Path)
 			return
@@ -248,4 +362,19 @@ func toSecurityGroupResourceFromBinding(
 		Spec:   payload.Spec,
 		Status: securityGroupStatusObj{State: stateValue},
 	}
+}
+
+func toSecurityGroupRuleSpecs(rules []hetzner.SecurityGroupRule) []securityGroupRuleSpec {
+	if len(rules) == 0 {
+		return []securityGroupRuleSpec{}
+	}
+	out := make([]securityGroupRuleSpec, 0, len(rules))
+	for _, rule := range rules {
+		direction := strings.TrimSpace(rule.Direction)
+		if direction == "" {
+			continue
+		}
+		out = append(out, securityGroupRuleSpec{Direction: strings.ToLower(direction)})
+	}
+	return out
 }

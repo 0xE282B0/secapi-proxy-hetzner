@@ -49,6 +49,11 @@ type NetworkProvider interface {
 	GetNetwork(ctx context.Context, name string) (*hetzner.Network, error)
 	CreateOrUpdateNetwork(ctx context.Context, req hetzner.NetworkCreateRequest) (*hetzner.Network, bool, error)
 	DeleteNetwork(ctx context.Context, name string) (bool, error)
+
+	ListSecurityGroups(ctx context.Context) ([]hetzner.SecurityGroup, error)
+	GetSecurityGroup(ctx context.Context, name string) (*hetzner.SecurityGroup, error)
+	CreateOrUpdateSecurityGroup(ctx context.Context, req hetzner.SecurityGroupCreateRequest) (*hetzner.SecurityGroup, bool, error)
+	DeleteSecurityGroup(ctx context.Context, name string) (bool, error)
 }
 
 type statusResponse struct {
@@ -237,8 +242,8 @@ func New(
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/nics/{name}", nicCRUD(store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/public-ips", listPublicIPs(store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/public-ips/{name}", publicIPCRUD(store))
-	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/security-groups", listSecurityGroups(store))
-	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/security-groups/{name}", securityGroupCRUD(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/security-groups", listSecurityGroups(networkProvider, store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/security-groups/{name}", securityGroupCRUD(networkProvider, store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/internet-gateways", listInternetGateways(store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/internet-gateways/{name}", internetGatewayCRUD(store))
 	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/images", listImages(catalogProvider))
