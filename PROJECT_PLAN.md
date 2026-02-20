@@ -64,6 +64,12 @@ Planned mapping from SecAPI to Hetzner:
 - Network/PublicIP -> Hetzner primary IPs / floating IPs
 - LoadBalancer extension -> Hetzner load balancers (later milestone)
 
+Current operating decisions:
+
+- Catalog endpoints (`/regions`, `/skus`, `/images`) remain tenant-scoped/global for now.
+- Workspace provider credentials are only injected for workspace-scoped resource operations.
+- Future enhancement: optional workspace-scoped catalog routes when per-workspace catalog visibility is required.
+
 Known gaps to handle explicitly:
 
 - Full SecAPI RBAC semantics may exceed Hetzner token model.
