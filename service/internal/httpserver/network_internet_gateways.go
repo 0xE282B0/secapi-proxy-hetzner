@@ -285,6 +285,50 @@ func resolveInternetGatewayRouteUsage(ctx context.Context, store *state.Store, t
 	return networks, routeTables, nil
 }
 
+func refreshInternetGatewayFromRouteUsage(
+	ctx context.Context,
+	store *state.Store,
+	computeProvider ComputeStorageProvider,
+	cfg config.Config,
+	tenant, workspace, gatewayName string,
+) error {
+	ref := internetGatewayRef(tenant, workspace, gatewayName)
+	binding, err := store.GetResourceBinding(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if binding == nil {
+		return nil
+	}
+	payload, err := parseInternetGatewayBinding(binding.ProviderRef)
+	if err != nil {
+		return err
+	}
+	networks, routeTables, err := resolveInternetGatewayRouteUsage(ctx, store, tenant, workspace, gatewayName)
+	if err != nil {
+		return err
+	}
+	payload.Networks = networks
+	payload.RouteTables = routeTables
+	providerRef, err := reconcileInternetGatewayProvider(ctx, store, computeProvider, cfg, tenant, workspace, payload)
+	if err != nil {
+		return err
+	}
+	payload.ProviderRef = providerRef
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return store.UpsertResourceBinding(ctx, state.ResourceBinding{
+		Tenant:      tenant,
+		Workspace:   workspace,
+		Kind:        resourceBindingKindInternetGateway,
+		SecaRef:     ref,
+		ProviderRef: string(raw),
+		Status:      "active",
+	})
+}
+
 func reconcileInternetGatewayProvider(
 	ctx context.Context,
 	store *state.Store,

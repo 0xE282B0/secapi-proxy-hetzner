@@ -3,14 +3,16 @@ package httpserver
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/config"
 	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/state"
 )
 
 const (
-	resourceBindingKindRouteTable          = "route-table"
+	resourceBindingKindRouteTable           = "route-table"
 	resourceBindingKindNetworkRouteTableRef = "network-route-table-ref"
 )
 
@@ -89,15 +91,15 @@ func listRouteTables(store *state.Store) http.HandlerFunc {
 	}
 }
 
-func routeTableCRUD(store *state.Store) http.HandlerFunc {
+func routeTableCRUD(store *state.Store, computeProvider ComputeStorageProvider, cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			getRouteTable(store)(w, r)
 		case http.MethodPut:
-			putRouteTable(store)(w, r)
+			putRouteTable(store, computeProvider, cfg)(w, r)
 		case http.MethodDelete:
-			deleteRouteTable(store)(w, r)
+			deleteRouteTable(store, computeProvider, cfg)(w, r)
 		default:
 			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET, PUT and DELETE are supported", r.URL.Path)
 		}
@@ -132,13 +134,14 @@ func getRouteTable(store *state.Store) http.HandlerFunc {
 	}
 }
 
-func putRouteTable(store *state.Store) http.HandlerFunc {
+func putRouteTable(store *state.Store, computeProvider ComputeStorageProvider, cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant, workspace, network, name, ok := scopedNetworkNameFromPath(w, r, "route table name is required")
 		if !ok {
 			return
 		}
-		if _, ok := workspaceExecutionContext(w, r, store, tenant, workspace); !ok {
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
 			return
 		}
 		var req routeTableResource
@@ -177,6 +180,12 @@ func putRouteTable(store *state.Store) http.HandlerFunc {
 			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to save route table", r.URL.Path)
 			return
 		}
+		for _, gatewayName := range internetGatewayNamesFromRoutes(req.Spec.Routes) {
+			if err := refreshInternetGatewayFromRouteUsage(ctx, store, computeProvider, cfg, tenant, workspace, gatewayName); err != nil {
+				respondFromError(w, err, r.URL.Path)
+				return
+			}
+		}
 		binding, err := store.GetResourceBinding(r.Context(), ref)
 		if err != nil || binding == nil {
 			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to load route table", r.URL.Path)
@@ -191,13 +200,14 @@ func putRouteTable(store *state.Store) http.HandlerFunc {
 	}
 }
 
-func deleteRouteTable(store *state.Store) http.HandlerFunc {
+func deleteRouteTable(store *state.Store, computeProvider ComputeStorageProvider, cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant, workspace, network, name, ok := scopedNetworkNameFromPath(w, r, "route table name is required")
 		if !ok {
 			return
 		}
-		if _, ok := workspaceExecutionContext(w, r, store, tenant, workspace); !ok {
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
 			return
 		}
 		ref := routeTableRefKey(tenant, workspace, network, name)
@@ -210,9 +220,20 @@ func deleteRouteTable(store *state.Store) http.HandlerFunc {
 			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "route table not found", r.URL.Path)
 			return
 		}
+		payload, err := parseRouteTableBinding(binding.ProviderRef)
+		if err != nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "invalid route table payload", r.URL.Path)
+			return
+		}
 		if err := store.DeleteResourceBinding(r.Context(), ref); err != nil {
 			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to delete route table", r.URL.Path)
 			return
+		}
+		for _, gatewayName := range internetGatewayNamesFromRoutes(payload.Spec.Routes) {
+			if err := refreshInternetGatewayFromRouteUsage(ctx, store, computeProvider, cfg, tenant, workspace, gatewayName); err != nil {
+				respondFromError(w, err, r.URL.Path)
+				return
+			}
 		}
 		respondJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 	}
@@ -236,6 +257,27 @@ func parseRouteTableBinding(raw string) (routeTableBindingPayload, error) {
 	var payload routeTableBindingPayload
 	err := json.Unmarshal([]byte(raw), &payload)
 	return payload, err
+}
+
+func internetGatewayNamesFromRoutes(routes []routeTableRouteSpec) []string {
+	seen := map[string]struct{}{}
+	for _, route := range routes {
+		target := strings.ToLower(strings.TrimSpace(route.TargetRef.Resource))
+		if !strings.HasPrefix(target, "internet-gateways/") {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(resourceNameFromRef(target)))
+		if name == "" {
+			continue
+		}
+		seen[name] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func toRouteTableResourceFromBinding(
@@ -276,4 +318,3 @@ func toRouteTableResourceFromBinding(
 		Status: routeTableStatusObject{State: stateValue},
 	}
 }
-

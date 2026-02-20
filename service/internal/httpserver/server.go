@@ -236,7 +236,7 @@ func New(
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks", listNetworksProvider(networkProvider, store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{name}", networkCRUDProvider(networkProvider, store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/route-tables", listRouteTables(store))
-	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/route-tables/{name}", routeTableCRUD(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/route-tables/{name}", routeTableCRUD(store, computeStorageProvider, cfg))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/subnets", listSubnets(store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/networks/{network}/subnets/{name}", subnetCRUD(store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/nics", listNICs(store))
