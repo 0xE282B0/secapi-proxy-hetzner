@@ -156,6 +156,13 @@ func putRouteTable(store *state.Store, computeProvider ComputeStorageProvider, c
 			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to load route table", r.URL.Path)
 			return
 		}
+		var previousRoutes []routeTableRouteSpec
+		if existing != nil {
+			existingPayload, parseErr := parseRouteTableBinding(existing.ProviderRef)
+			if parseErr == nil {
+				previousRoutes = existingPayload.Spec.Routes
+			}
+		}
 
 		payload := routeTableBindingPayload{
 			Name:    name,
@@ -180,7 +187,7 @@ func putRouteTable(store *state.Store, computeProvider ComputeStorageProvider, c
 			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to save route table", r.URL.Path)
 			return
 		}
-		for _, gatewayName := range internetGatewayNamesFromRoutes(req.Spec.Routes) {
+		for _, gatewayName := range affectedInternetGatewayNames(req.Spec.Routes, previousRoutes) {
 			if err := refreshInternetGatewayFromRouteUsage(ctx, store, computeProvider, cfg, tenant, workspace, gatewayName); err != nil {
 				respondFromError(w, err, r.URL.Path)
 				return
@@ -270,6 +277,22 @@ func internetGatewayNamesFromRoutes(routes []routeTableRouteSpec) []string {
 		if name == "" {
 			continue
 		}
+		seen[name] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func affectedInternetGatewayNames(currentRoutes, previousRoutes []routeTableRouteSpec) []string {
+	seen := map[string]struct{}{}
+	for _, name := range internetGatewayNamesFromRoutes(currentRoutes) {
+		seen[name] = struct{}{}
+	}
+	for _, name := range internetGatewayNamesFromRoutes(previousRoutes) {
 		seen[name] = struct{}{}
 	}
 	out := make([]string, 0, len(seen))
