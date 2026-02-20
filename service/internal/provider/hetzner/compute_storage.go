@@ -13,6 +13,7 @@ import (
 )
 
 type Instance struct {
+	ID         int64
 	Name       string
 	SKUName    string
 	ImageName  string
@@ -31,6 +32,7 @@ type InstanceCreateRequest struct {
 }
 
 type BlockStorage struct {
+	ID         int64
 	Name       string
 	SizeGB     int
 	Region     string
@@ -900,6 +902,7 @@ func instanceFromServer(server *hcloud.Server) Instance {
 		region = strings.ToLower(server.Location.Name)
 	}
 	return Instance{
+		ID:         server.ID,
 		Name:       strings.ToLower(server.Name),
 		SKUName:    sku,
 		ImageName:  image,
@@ -919,6 +922,7 @@ func blockStorageFromVolume(volume *hcloud.Volume) BlockStorage {
 		attachedTo = strings.ToLower(volume.Server.Name)
 	}
 	return BlockStorage{
+		ID:         volume.ID,
 		Name:       strings.ToLower(volume.Name),
 		SizeGB:     volume.Size,
 		Region:     region,

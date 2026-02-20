@@ -85,7 +85,7 @@ func listInstances(provider ComputeStorageProvider, store *state.Store) http.Han
 				Workspace:   workspace,
 				Kind:        "instance",
 				SecaRef:     computeInstanceRef(tenant, workspace, instance.Name),
-				ProviderRef: "hetzner.cloud/servers/" + instance.Name,
+				ProviderRef: serverProviderRef(instance.ID, instance.Name),
 				Status:      "active",
 			})
 		}
@@ -136,7 +136,7 @@ func getInstance(provider ComputeStorageProvider, store *state.Store) http.Handl
 			Workspace:   workspace,
 			Kind:        "instance",
 			SecaRef:     computeInstanceRef(tenant, workspace, name),
-			ProviderRef: "hetzner.cloud/servers/" + name,
+			ProviderRef: serverProviderRef(instance.ID, instance.Name),
 			Status:      "active",
 		}); err != nil {
 			respondFromError(w, err, r.URL.Path)
@@ -206,7 +206,7 @@ func putInstance(provider ComputeStorageProvider, store *state.Store) http.Handl
 			Workspace:   workspace,
 			Kind:        "instance",
 			SecaRef:     computeInstanceRef(tenant, workspace, name),
-			ProviderRef: "hetzner.cloud/servers/" + name,
+			ProviderRef: serverProviderRef(instance.ID, instance.Name),
 			Status:      "active",
 		}); err != nil {
 			respondFromError(w, err, r.URL.Path)

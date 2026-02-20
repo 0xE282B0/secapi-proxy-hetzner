@@ -173,6 +173,20 @@ func blockStorageRef(tenant, workspace, name string) string {
 	return "seca.storage/v1/tenants/" + tenant + "/workspaces/" + workspace + "/block-storages/" + name
 }
 
+func serverProviderRef(id int64, name string) string {
+	if id > 0 {
+		return fmt.Sprintf("hetzner.cloud/servers/%d", id)
+	}
+	return "hetzner.cloud/servers/" + strings.ToLower(strings.TrimSpace(name))
+}
+
+func volumeProviderRef(id int64, name string) string {
+	if id > 0 {
+		return fmt.Sprintf("hetzner.cloud/volumes/%d", id)
+	}
+	return "hetzner.cloud/volumes/" + strings.ToLower(strings.TrimSpace(name))
+}
+
 func operationID(prefix, name string) string {
 	return fmt.Sprintf("%s-%s-%d", prefix, name, time.Now().UnixNano())
 }

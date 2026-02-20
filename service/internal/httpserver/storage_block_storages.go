@@ -80,7 +80,7 @@ func listBlockStorages(provider ComputeStorageProvider, store *state.Store) http
 				Workspace:   workspace,
 				Kind:        "block-storage",
 				SecaRef:     blockStorageRef(tenant, workspace, volume.Name),
-				ProviderRef: "hetzner.cloud/volumes/" + volume.Name,
+				ProviderRef: volumeProviderRef(volume.ID, volume.Name),
 				Status:      "active",
 			})
 		}
@@ -130,7 +130,7 @@ func getBlockStorage(provider ComputeStorageProvider, store *state.Store) http.H
 			Workspace:   workspace,
 			Kind:        "block-storage",
 			SecaRef:     blockStorageRef(tenant, workspace, name),
-			ProviderRef: "hetzner.cloud/volumes/" + name,
+			ProviderRef: volumeProviderRef(volume.ID, volume.Name),
 			Status:      "active",
 		}); err != nil {
 			respondFromError(w, err, r.URL.Path)
@@ -197,7 +197,7 @@ func putBlockStorage(provider ComputeStorageProvider, store *state.Store) http.H
 			Workspace:   workspace,
 			Kind:        "block-storage",
 			SecaRef:     blockStorageRef(tenant, workspace, name),
-			ProviderRef: "hetzner.cloud/volumes/" + name,
+			ProviderRef: volumeProviderRef(volume.ID, volume.Name),
 			Status:      "active",
 		}); err != nil {
 			respondFromError(w, err, r.URL.Path)
