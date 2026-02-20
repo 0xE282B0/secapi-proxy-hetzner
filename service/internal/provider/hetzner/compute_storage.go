@@ -751,8 +751,78 @@ func (s *RegionService) AttachInstanceToNetwork(ctx context.Context, instanceNam
 	actionID := ""
 	if action != nil {
 		actionID = fmt.Sprintf("%d", action.ID)
+		if waitErr := s.clientFor(ctx).Action.WaitFor(ctx, action); waitErr != nil {
+			return false, actionID, waitErr
+		}
 	}
 	return true, actionID, nil
+}
+
+func (s *RegionService) SyncInstanceNetworks(ctx context.Context, instanceName string, networkNames []string) error {
+	if !s.configured {
+		return ErrNotConfigured
+	}
+	server, _, err := s.clientFor(ctx).Server.GetByName(ctx, strings.TrimSpace(instanceName))
+	if err != nil {
+		return err
+	}
+	if server == nil {
+		return notFoundError(fmt.Sprintf("instance %q not found", instanceName))
+	}
+
+	desired := map[string]struct{}{}
+	for _, name := range networkNames {
+		n := strings.ToLower(strings.TrimSpace(name))
+		if n == "" {
+			continue
+		}
+		desired[n] = struct{}{}
+	}
+
+	for networkName := range desired {
+		attached := false
+		for _, privateNet := range server.PrivateNet {
+			if privateNet.Network != nil && strings.EqualFold(privateNet.Network.Name, networkName) {
+				attached = true
+				break
+			}
+		}
+		if attached {
+			continue
+		}
+		if _, _, attachErr := s.AttachInstanceToNetwork(ctx, instanceName, networkName); attachErr != nil {
+			return attachErr
+		}
+	}
+
+	server, _, err = s.clientFor(ctx).Server.GetByName(ctx, strings.TrimSpace(instanceName))
+	if err != nil {
+		return err
+	}
+	if server == nil {
+		return notFoundError(fmt.Sprintf("instance %q not found", instanceName))
+	}
+	for _, privateNet := range server.PrivateNet {
+		if privateNet.Network == nil {
+			continue
+		}
+		current := strings.ToLower(strings.TrimSpace(privateNet.Network.Name))
+		if _, keep := desired[current]; keep {
+			continue
+		}
+		action, _, detachErr := s.clientFor(ctx).Server.DetachFromNetwork(ctx, server, hcloud.ServerDetachFromNetworkOpts{
+			Network: privateNet.Network,
+		})
+		if detachErr != nil {
+			return detachErr
+		}
+		if action != nil {
+			if waitErr := s.clientFor(ctx).Action.WaitFor(ctx, action); waitErr != nil {
+				return waitErr
+			}
+		}
+	}
+	return nil
 }
 
 func (s *RegionService) getServerByName(ctx context.Context, name string) (*hcloud.Server, error) {

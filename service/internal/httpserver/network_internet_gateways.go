@@ -383,14 +383,8 @@ func reconcileInternetGatewayProvider(
 	if instance == nil {
 		return "", fmt.Errorf("internet-gateway instance %q not found after create", instanceName)
 	}
-	for _, networkName := range payload.Networks {
-		trimmed := strings.ToLower(strings.TrimSpace(networkName))
-		if trimmed == "" {
-			continue
-		}
-		if _, _, attachErr := computeProvider.AttachInstanceToNetwork(ctx, instanceName, trimmed); attachErr != nil {
-			return "", attachErr
-		}
+	if syncErr := computeProvider.SyncInstanceNetworks(ctx, instanceName, payload.Networks); syncErr != nil {
+		return "", syncErr
 	}
 	return fmt.Sprintf("instances/%s", instance.Name), nil
 }

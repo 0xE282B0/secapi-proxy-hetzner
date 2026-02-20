@@ -36,6 +36,7 @@ type ComputeStorageProvider interface {
 	StopInstance(ctx context.Context, name string) (bool, string, error)
 	RestartInstance(ctx context.Context, name string) (bool, string, error)
 	AttachInstanceToNetwork(ctx context.Context, instanceName, networkName string) (bool, string, error)
+	SyncInstanceNetworks(ctx context.Context, instanceName string, networkNames []string) error
 
 	ListBlockStorages(ctx context.Context) ([]hetzner.BlockStorage, error)
 	GetBlockStorage(ctx context.Context, name string) (*hetzner.BlockStorage, error)
