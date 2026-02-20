@@ -1,179 +1,77 @@
-# SecAPI on Hetzner: Project Plan
+# SecAPI Proxy Hetzner — Current Project Plan
 
-## 1. Goal
+## 1. Objective
+Ship a production-credible SECA proxy on Hetzner where conformance passes are not based on test-only shortcuts, and core networking semantics behave predictably for real workloads.
 
-Build a provider service that implements the SECA (SecAPI) contract and executes operations against Hetzner Cloud.
+## 2. Current baseline
+- `make conformance-full` passes in current development flow.
+- Workspace-scoped credentials are the active model (no global Hetzner token fallback for runtime operations).
+- Network resources are persisted as SECA abstractions where Hetzner has no direct equivalent.
+- Internet gateway now has an opt-in provider-backed implementation (`SECA_INTERNET_GATEWAY_NAT_VM=true`):
+  - managed NAT VM lifecycle
+  - network attachment sync
+  - route-table-triggered reconcile
+  - Hetzner network route programming (`destination -> IGW private IP`)
 
-Outcome: clients using SecAPI can manage Hetzner resources through a standard interface.
+## 3. What is done
+1. Provider-backed `networks` + persistent SECA overlays (`routeTableRef`, metadata shaping).
+2. Persistent abstractions for `route-tables`, `subnets`, `nics`, `public-ips`.
+3. Provider-backed `security-groups` via Hetzner firewalls.
+4. Provider-backed (opt-in) `internet-gateways` via managed NAT VM.
+5. Route-table updates now trigger:
+   - IGW reconcile
+   - Hetzner route upsert/delete for IGW targets.
+6. Tracing labels added to provider-managed resources for cleanup/debug.
 
-## 2. Scope (v1)
+## 4. Remaining product gaps (highest priority)
+1. Guest readiness for private-only workload instances:
+   - default route and DNS are not always automatically usable in tested environments.
+   - real-world NAT worked only after manual guest route adjustment.
+2. Stronger e2e/integration coverage for route synchronization and IGW lifecycle edge cases.
+3. Better observability and troubleshooting outputs around route/IGW reconciliation.
 
-Implement Foundation APIs first:
+## 5. Execution plan
 
-- `Foundation/Authorization-v1` (minimal viable support)
-- `Foundation/Workspace-v1`
-- `Foundation/Region-v1`
-- `Foundation/Compute-v1`
-- `Foundation/Network-v1`
-- `Foundation/Storage-v1`
-
-Defer Extensions to later milestones:
-
-- `Loadbalancer-v1beta1` (likely feasible)
-- `Natgateway-v1beta1` (likely partial/emulated)
-- `Objectstorage-v1beta1` (likely unsupported on Hetzner Cloud API)
-- `Kubernetes-v1beta1` (likely unsupported)
-- `Activitylog-v1beta1` (possible via action/event translation)
-- `Wellknown-v1` (should be implemented early for capability discovery)
-
-## 3. Architecture
-
-Codebase layout:
-
-- `cmd/secapi-proxy-hetzner`: service entrypoint
-- `internal/http`: HTTP server + middleware + routing
-- `internal/secapi`: request/response shaping, validation, API versioning
-- `internal/provider/hetzner`: Hetzner adapter (hcloud-go client usage)
-- `internal/translate`: SecAPI <-> Hetzner model translators
-- `internal/state`: persistent metadata store (resource mapping + async operations)
-- `internal/auth`: token handling and workspace scoping
-- `internal/ops`: long-running operation tracking/reconciliation
-
-Core design decisions:
-
-- Keep a strict provider interface to allow future backends.
-- Persist mapping records (`secapi_resource_id <-> hetzner_resource_id`) in local database.
-- Support idempotency keys and reconciliation loops for eventually consistent behavior.
-- Implement `Wellknown` capability endpoint to advertise supported/unsupported features.
-- Use `pglite` as embedded Postgres-compatible persistence for local/runtime state.
-- Use `sqlc` to generate type-safe data access from SQL queries.
-- Use a migration tool (`golang-migrate`) to version and apply schema changes.
-
-## 4. Capability mapping (first pass)
-
-Planned mapping from SecAPI to Hetzner:
-
-- Workspace -> provider-owned workspace context backed by token/project metadata
-- Region -> Hetzner locations/datacenters
-- SKU -> Hetzner server types, volume tiers, network capabilities
-- Compute/Instance -> Hetzner servers
-- Storage/BlockStorage -> Hetzner volumes
-- Storage/Image -> Hetzner images
-- Network/VNet + Subnet -> Hetzner networks/subnets
-- Network/SecurityGroup -> Hetzner firewalls
-- Network/PublicIP -> Hetzner primary IPs / floating IPs
-- LoadBalancer extension -> Hetzner load balancers (later milestone)
-
-Current operating decisions:
-
-- Catalog endpoints (`/regions`, `/skus`, `/images`) remain tenant-scoped/global for now.
-- Workspace provider credentials are only injected for workspace-scoped resource operations.
-- Future enhancement: optional workspace-scoped catalog routes when per-workspace catalog visibility is required.
-
-Known gaps to handle explicitly:
-
-- Full SecAPI RBAC semantics may exceed Hetzner token model.
-- Route tables and advanced networking might need partial support.
-- NAT gateway may require instance-based emulation.
-- Object storage and managed Kubernetes are not native Hetzner Cloud API primitives.
-
-## 5. Phased delivery plan
-
-## Phase 0: Project bootstrap (1 week)
-
-1. Initialize Go module, toolchain, lints, formatting, CI workflow.
-2. Add OpenAPI-driven contract checks against SecAPI spec artifacts.
-3. Create provider abstraction and stub Hetzner adapter.
-4. Add local dev config (`HETZNER_TOKEN`, endpoint, logging level).
-5. Add persistence stack bootstrap (`pglite` init, `golang-migrate` migrations, `sqlc generate`).
+### Phase A — Workload egress readiness
+1. Define expected behavior for private-only instance boot networking under SECA.
+2. Implement deterministic route/DNS bootstrap strategy for created instances (without breaking existing conformance behavior).
+3. Add regression tests for private-only egress reachability assumptions.
 
 Exit criteria:
+- Private-only instance can consistently reach internet through IGW/NAT path without manual post-boot host fixes.
 
-- Service starts, health endpoint works, CI passes, contract test scaffold exists.
-
-## Phase 1: Read-only foundation (1-2 weeks)
-
-1. Implement `Wellknown` and capability declaration.
-2. Implement `Region` list/get via Hetzner location/datacenter APIs.
-3. Implement read-only `SKU` and image catalog endpoints.
-4. Add error translation layer (Hetzner API -> SecAPI error shapes).
-
-Exit criteria:
-
-- SecAPI clients can discover supported capabilities, regions, and SKUs.
-
-## Phase 2: Compute + Storage CRUD (2-3 weeks)
-
-1. Implement instance create/get/list/delete/start/stop/reboot.
-2. Implement volume create/attach/detach/list/delete.
-3. Implement image read/list and supported image operations.
-4. Persist resource mapping and operation records in DB.
+### Phase B — Route synchronization hardening
+1. Add integration-style tests for:
+   - route add -> Hetzner route created
+   - route change -> Hetzner route updated
+   - route remove/delete -> Hetzner route deleted
+2. Validate reconcile behavior under repeated idempotent PUTs and mixed route targets.
+3. Ensure stale route cleanup on IGW removal and route-table deletion remains safe.
 
 Exit criteria:
+- Route-table and Hetzner route state remain converged under retries and updates.
 
-- End-to-end compute/storage lifecycle works through SecAPI endpoints.
-
-## Phase 3: Network core CRUD (2-3 weeks)
-
-1. Implement network and subnet lifecycle.
-2. Implement security groups and rules via firewalls.
-3. Implement public IP lifecycle and attach/detach.
-4. Document partial/unsupported route-table semantics (if needed).
-
-Exit criteria:
-
-- End-to-end network lifecycle works for common workloads.
-
-## Phase 4: Workspace + Authorization minimum support (1-2 weeks)
-
-1. Define workspace tenancy model (single-token, token-per-workspace, or delegated gateway).
-2. Implement workspace CRUD metadata.
-3. Implement minimal role/assignment semantics compatible with provider constraints.
-4. Add explicit compatibility matrix for unsupported RBAC features.
+### Phase C — Observability + operability
+1. Add structured logs for:
+   - IGW reconcile actions
+   - route upsert/delete decisions
+   - gateway IP resolution failures
+2. Add basic counters/metrics hooks for reconcile successes/failures.
+3. Document runbook for e2e NAT diagnostics (`hcloud` + `curl` + guest checks).
 
 Exit criteria:
+- Operational debugging does not require code inspection for common network failures.
 
-- Multi-workspace separation and minimal authz behavior are operational.
+## 6. Guardrails
+1. Keep non-SECA custom endpoints out of public API surface.
+2. Keep test-mode behavior explicitly gated and documented.
+3. Prefer provider-backed behavior over conformance-only emulation when feasible.
+4. Keep changes reversible with clear feature flags where risk is higher.
 
-## Phase 5: Extensions + hardening (2-4 weeks)
-
-1. Implement load balancer extension.
-2. Add activity log adapter (if feasible from Hetzner actions).
-3. Add optional NAT emulation strategy, if required.
-4. Production hardening: retries, rate limiting, tracing, metrics, audit logs.
-
-Exit criteria:
-
-- Stable beta release with documented extension support matrix.
-
-## 6. Testing strategy
-
-1. Unit tests for translators (SecAPI model <-> Hetzner model).
-2. Contract tests against SecAPI OpenAPI definitions.
-3. Integration tests with mocked hcloud-go and optional live Hetzner project.
-4. Golden tests for error and operation state mappings.
-5. Conformance-like test suite: create/list/get/delete for each supported resource type.
-
-## 7. Operations and deployment
-
-1. Containerize service (`Dockerfile`) with minimal runtime image.
-2. Provide Helm chart or Terraform module for deployment.
-3. Add configuration for secret management of Hetzner tokens.
-4. Add SLOs, dashboards, alerts for API latency and provider error rates.
-5. Define upgrade strategy for spec changes and backward compatibility.
-
-## 8. Risks and mitigations
-
-1. Spec/provider mismatch: keep a capability matrix and return explicit unsupported errors.
-2. Async behavior differences: normalize through operation state machine.
-3. Rate limits and transient failures: use exponential backoff + circuit breaking.
-4. Security model mismatch: document trust boundaries and minimum viable authz contract.
-
-## 9. Immediate next implementation tasks
-
-1. Create skeleton service and provider interfaces.
-2. Implement `Wellknown` and `Region` endpoints first.
-3. Add translation package and golden tests.
-4. Add `pglite`-backed mapping store for resource IDs and operation tracking.
-5. Add migration scripts and generated `sqlc` query package for persistence access.
-6. Add first live integration test for region listing with Hetzner token.
+## 7. Immediate next tasks
+1. Implement and test private-only instance route/DNS bootstrap behavior.
+2. Add route sync integration tests (IGW target path).
+3. Run:
+   - `go test ./...` (service)
+   - `make conformance-full`
+   - real Hetzner IGW/NAT e2e checklist
