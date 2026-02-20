@@ -142,6 +142,14 @@ Run Phase 2 smoke checks:
 make phase2-smoke
 ```
 
+## Examples
+
+Internet gateway e2e flow (workspace -> network -> internet-gateway -> route-table):
+
+```bash
+./examples/internet-gateway-e2e.sh
+```
+
 ## Minimal workspace token provisioner
 
 For conformance/local runs where workspaces start in `creating`, use:

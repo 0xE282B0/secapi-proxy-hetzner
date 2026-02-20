@@ -732,6 +732,11 @@ func (s *RegionService) AttachInstanceToNetwork(ctx context.Context, instanceNam
 	if network == nil {
 		return false, "", notFoundError(fmt.Sprintf("network %q not found", networkName))
 	}
+	if server.Location != nil && server.Location.NetworkZone != "" {
+		if ensureErr := s.ensureNetworkHasCloudSubnetInZone(ctx, network, server.Location.NetworkZone); ensureErr != nil {
+			return false, "", ensureErr
+		}
+	}
 
 	for _, privateNet := range server.PrivateNet {
 		if privateNet.Network != nil && privateNet.Network.ID == network.ID {
@@ -756,6 +761,126 @@ func (s *RegionService) AttachInstanceToNetwork(ctx context.Context, instanceNam
 		}
 	}
 	return true, actionID, nil
+}
+
+func (s *RegionService) ensureNetworkHasCloudSubnetInZone(ctx context.Context, network *hcloud.Network, zone hcloud.NetworkZone) error {
+	if network == nil {
+		return fmt.Errorf("network is nil")
+	}
+	if zone == "" {
+		return nil
+	}
+	if hasCloudSubnetInZone(network, zone) {
+		return nil
+	}
+	subnetRange, err := deriveAvailableCloudSubnet(network, 24)
+	if err != nil {
+		return err
+	}
+	action, _, err := s.clientFor(ctx).Network.AddSubnet(ctx, network, hcloud.NetworkAddSubnetOpts{
+		Subnet: hcloud.NetworkSubnet{
+			Type:        hcloud.NetworkSubnetTypeCloud,
+			NetworkZone: zone,
+			IPRange:     subnetRange,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if action != nil {
+		if waitErr := s.clientFor(ctx).Action.WaitFor(ctx, action); waitErr != nil {
+			return waitErr
+		}
+	}
+	return nil
+}
+
+func deriveAvailableCloudSubnet(network *hcloud.Network, preferredPrefix int) (*net.IPNet, error) {
+	if network == nil || network.IPRange == nil {
+		return nil, invalidRequestError("network has no ip range")
+	}
+	base := network.IPRange
+	ones, bits := base.Mask.Size()
+	if bits != 32 {
+		return nil, invalidRequestError("only ipv4 network ranges are supported for cloud subnet derivation")
+	}
+
+	prefix := preferredPrefix
+	if ones > prefix {
+		prefix = ones
+	}
+	if prefix < ones || prefix > 32 {
+		return nil, invalidRequestError("invalid subnet prefix")
+	}
+
+	used := make([]*net.IPNet, 0, len(network.Subnets))
+	for _, subnet := range network.Subnets {
+		if subnet.IPRange != nil {
+			used = append(used, subnet.IPRange)
+		}
+	}
+
+	candidates := enumerateSubnets(base, prefix)
+	for _, candidate := range candidates {
+		overlaps := false
+		for _, existing := range used {
+			if ipNetOverlaps(candidate, existing) {
+				overlaps = true
+				break
+			}
+		}
+		if !overlaps {
+			return candidate, nil
+		}
+	}
+	return nil, invalidRequestError("no subnet or IP available")
+}
+
+func enumerateSubnets(parent *net.IPNet, prefix int) []*net.IPNet {
+	if parent == nil {
+		return nil
+	}
+	ones, bits := parent.Mask.Size()
+	if bits != 32 || prefix < ones || prefix > 32 {
+		return nil
+	}
+	baseIP := parent.IP.To4()
+	if baseIP == nil {
+		return nil
+	}
+	span := uint32(1) << uint32(32-prefix)
+	parentSpan := uint32(1) << uint32(32-ones)
+	start := ipv4ToUint32(baseIP)
+	out := make([]*net.IPNet, 0, parentSpan/span)
+	for offset := uint32(0); offset < parentSpan; offset += span {
+		ip := uint32ToIPv4(start + offset)
+		out = append(out, &net.IPNet{IP: ip, Mask: net.CIDRMask(prefix, 32)})
+	}
+	return out
+}
+
+func ipNetOverlaps(a, b *net.IPNet) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Contains(b.IP) || b.Contains(a.IP)
+}
+
+func ipv4ToUint32(ip net.IP) uint32 {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return 0
+	}
+	return uint32(ip4[0])<<24 | uint32(ip4[1])<<16 | uint32(ip4[2])<<8 | uint32(ip4[3])
+}
+
+func uint32ToIPv4(v uint32) net.IP {
+	return net.IPv4(
+		byte(v>>24),
+		byte((v>>16)&0xff),
+		byte((v>>8)&0xff),
+		byte(v&0xff),
+	).To4()
 }
 
 func (s *RegionService) SyncInstanceNetworks(ctx context.Context, instanceName string, networkNames []string) error {
