@@ -18,6 +18,7 @@ type Config struct {
 	HetznerPrimaryAPIURL string
 	HetznerAvailCacheTTL time.Duration
 	ConformanceMode      bool
+	InternetGatewayNATVM bool
 }
 
 func Load() Config {
@@ -33,6 +34,7 @@ func Load() Config {
 		HetznerPrimaryAPIURL: strings.TrimRight(getenvFirstDefault("https://api.hetzner.com/v1", "HCLOUD_HETZNER_ENDPOINT", "HETZNER_PRIMARY_API_URL"), "/"),
 		HetznerAvailCacheTTL: getenvDurationDefault("SECA_HETZNER_AVAILABILITY_CACHE_TTL", "60s"),
 		ConformanceMode:      getenvBool("SECA_CONFORMANCE_MODE"),
+		InternetGatewayNATVM: getenvBool("SECA_INTERNET_GATEWAY_NAT_VM"),
 	}
 }
 

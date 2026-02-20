@@ -139,10 +139,10 @@ type imageIterator struct {
 }
 
 type imageResource struct {
-	Metadata resourceMetadata `json:"metadata"`
+	Metadata resourceMetadata  `json:"metadata"`
 	Labels   map[string]string `json:"labels,omitempty"`
-	Spec     imageSpec        `json:"spec"`
-	Status   imageStatus      `json:"status"`
+	Spec     imageSpec         `json:"spec"`
+	Status   imageStatus       `json:"status"`
 }
 
 type imageSpec struct {
@@ -245,7 +245,7 @@ func New(
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/security-groups", listSecurityGroups(networkProvider, store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/security-groups/{name}", securityGroupCRUD(networkProvider, store))
 	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/internet-gateways", listInternetGateways(store))
-	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/internet-gateways/{name}", internetGatewayCRUD(store))
+	publicMux.HandleFunc("/network/v1/tenants/{tenant}/workspaces/{workspace}/internet-gateways/{name}", internetGatewayCRUD(store, computeStorageProvider, cfg))
 	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/images", listImages(catalogProvider))
 	publicMux.HandleFunc("/storage/v1/tenants/{tenant}/images/{name}", imageCRUD(catalogProvider, cfg.ConformanceMode))
 	publicMux.HandleFunc("/compute/v1/tenants/{tenant}/workspaces/{workspace}/instances", listInstances(computeStorageProvider, store))

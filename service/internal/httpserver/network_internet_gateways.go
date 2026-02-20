@@ -3,11 +3,14 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/config"
+	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/provider/hetzner"
 	"github.com/eu-sovereign-cloud/secapi-proxy-hetzner/internal/state"
 )
 
@@ -34,12 +37,13 @@ type internetGatewayStatusObject struct {
 }
 
 type internetGatewayBindingPayload struct {
-	Name        string               `json:"name"`
-	Region      string               `json:"region"`
-	Labels      map[string]string    `json:"labels,omitempty"`
-	Spec        internetGatewaySpec  `json:"spec"`
-	Networks    []string             `json:"networks,omitempty"`
-	RouteTables []string             `json:"routeTables,omitempty"`
+	Name        string              `json:"name"`
+	Region      string              `json:"region"`
+	Labels      map[string]string   `json:"labels,omitempty"`
+	Spec        internetGatewaySpec `json:"spec"`
+	Networks    []string            `json:"networks,omitempty"`
+	RouteTables []string            `json:"routeTables,omitempty"`
+	ProviderRef string              `json:"providerRef,omitempty"`
 }
 
 func listInternetGateways(store *state.Store) http.HandlerFunc {
@@ -75,15 +79,15 @@ func listInternetGateways(store *state.Store) http.HandlerFunc {
 	}
 }
 
-func internetGatewayCRUD(store *state.Store) http.HandlerFunc {
+func internetGatewayCRUD(store *state.Store, computeProvider ComputeStorageProvider, cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			getInternetGateway(store)(w, r)
 		case http.MethodPut:
-			putInternetGateway(store)(w, r)
+			putInternetGateway(store, computeProvider, cfg)(w, r)
 		case http.MethodDelete:
-			deleteInternetGateway(store)(w, r)
+			deleteInternetGateway(store, computeProvider, cfg)(w, r)
 		default:
 			respondProblem(w, http.StatusMethodNotAllowed, "http://secapi.cloud/errors/invalid-request", "Method Not Allowed", "Only GET, PUT and DELETE are supported", r.URL.Path)
 		}
@@ -122,13 +126,14 @@ func getInternetGateway(store *state.Store) http.HandlerFunc {
 	}
 }
 
-func putInternetGateway(store *state.Store) http.HandlerFunc {
+func putInternetGateway(store *state.Store, computeProvider ComputeStorageProvider, cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant, workspace, name, ok := scopedNameFromPath(w, r, "internet gateway name is required")
 		if !ok {
 			return
 		}
-		if _, ok := workspaceExecutionContext(w, r, store, tenant, workspace); !ok {
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
 			return
 		}
 
@@ -156,6 +161,14 @@ func putInternetGateway(store *state.Store) http.HandlerFunc {
 		}
 		payload.Networks = networks
 		payload.RouteTables = routeTables
+		providerRef, reconcileErr := reconcileInternetGatewayProvider(ctx, store, computeProvider, cfg, tenant, workspace, payload)
+		if reconcileErr != nil {
+			respondFromError(w, reconcileErr, r.URL.Path)
+			return
+		}
+		if providerRef != "" {
+			payload.ProviderRef = providerRef
+		}
 		raw, err := json.Marshal(payload)
 		if err != nil {
 			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to encode internet gateway", r.URL.Path)
@@ -185,13 +198,14 @@ func putInternetGateway(store *state.Store) http.HandlerFunc {
 	}
 }
 
-func deleteInternetGateway(store *state.Store) http.HandlerFunc {
+func deleteInternetGateway(store *state.Store, computeProvider ComputeStorageProvider, cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant, workspace, name, ok := scopedNameFromPath(w, r, "internet gateway name is required")
 		if !ok {
 			return
 		}
-		if _, ok := workspaceExecutionContext(w, r, store, tenant, workspace); !ok {
+		ctx, ok := workspaceExecutionContext(w, r, store, tenant, workspace)
+		if !ok {
 			return
 		}
 		ref := internetGatewayRef(tenant, workspace, name)
@@ -203,6 +217,13 @@ func deleteInternetGateway(store *state.Store) http.HandlerFunc {
 		if binding == nil {
 			respondProblem(w, http.StatusNotFound, "http://secapi.cloud/errors/resource-not-found", "Not Found", "internet gateway not found", r.URL.Path)
 			return
+		}
+		if cfg.InternetGatewayNATVM {
+			instanceName := internetGatewayInstanceName(workspace, name)
+			if _, _, delErr := computeProvider.DeleteInstance(ctx, instanceName); delErr != nil {
+				respondFromError(w, delErr, r.URL.Path)
+				return
+			}
 		}
 		if err := store.DeleteResourceBinding(r.Context(), ref); err != nil {
 			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to delete internet gateway", r.URL.Path)
@@ -262,6 +283,73 @@ func resolveInternetGatewayRouteUsage(ctx context.Context, store *state.Store, t
 	}
 	sort.Strings(routeTables)
 	return networks, routeTables, nil
+}
+
+func reconcileInternetGatewayProvider(
+	ctx context.Context,
+	store *state.Store,
+	computeProvider ComputeStorageProvider,
+	cfg config.Config,
+	tenant, workspace string,
+	payload internetGatewayBindingPayload,
+) (string, error) {
+	if !cfg.InternetGatewayNATVM {
+		return "", nil
+	}
+	if computeProvider == nil {
+		return "", fmt.Errorf("internet-gateway provisioning is enabled but compute provider is not available")
+	}
+	region := strings.ToLower(strings.TrimSpace(payload.Region))
+	if region == "" {
+		workspaceRegion, ok := workspaceRegionOrDefault(ctx, store, tenant, workspace)
+		if !ok {
+			return "", fmt.Errorf("failed to resolve workspace region")
+		}
+		region = workspaceRegion
+	}
+
+	instanceName := internetGatewayInstanceName(workspace, payload.Name)
+	if len(payload.RouteTables) == 0 {
+		_, _, err := computeProvider.DeleteInstance(ctx, instanceName)
+		return "", err
+	}
+
+	_, _, _, err := computeProvider.CreateOrUpdateInstance(ctx, hetzner.InstanceCreateRequest{
+		Name:      instanceName,
+		SKUName:   "cax11",
+		ImageName: "ubuntu-24.04",
+		Region:    region,
+		Labels: withSecaProviderLabels(
+			payload.Labels,
+			tenant,
+			workspace,
+			"internet-gateway",
+			payload.Name,
+			internetGatewayRef(tenant, workspace, payload.Name),
+		),
+	})
+	if err != nil {
+		return "", err
+	}
+	instance, err := computeProvider.GetInstance(ctx, instanceName)
+	if err != nil {
+		return "", err
+	}
+	if instance == nil {
+		return "", fmt.Errorf("internet-gateway instance %q not found after create", instanceName)
+	}
+	return fmt.Sprintf("instances/%s", instance.Name), nil
+}
+
+func internetGatewayInstanceName(workspace, gatewayName string) string {
+	workspace = strings.ToLower(strings.TrimSpace(workspace))
+	gatewayName = strings.ToLower(strings.TrimSpace(gatewayName))
+	full := "seca-igw-" + workspace + "-" + gatewayName
+	if len(full) <= 63 {
+		return full
+	}
+	const keep = 63
+	return full[:keep]
 }
 
 func toInternetGatewayResourceFromBinding(
