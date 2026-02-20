@@ -1,8 +1,10 @@
 # secapi-proxy-hetzner
 
-Phase 0 scaffold for a SecAPI-compatible proxy backed by Hetzner APIs.
+SECA-compatible proxy for Hetzner Cloud.
 
-## Local development
+Current focus is practical conformance plus real provider behavior for core resources, including an opt-in internet-gateway implementation backed by a managed NAT VM.
+
+## Quick start
 
 ```bash
 make bootstrap
@@ -11,148 +13,48 @@ make test
 make build
 ```
 
-Run server:
+Run locally:
 
 ```bash
 SECA_DATABASE_URL='postgres://postgres:postgres@localhost:5432/secapi_proxy?sslmode=disable' \
 SECA_PUBLIC_BASE_URL='http://localhost:8080' \
 SECA_ADMIN_LISTEN_ADDR='127.0.0.1:8081' \
+SECA_ADMIN_TOKEN='dev-admin-token' \
+SECA_CREDENTIALS_KEY='MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=' \
 make run
 ```
 
-Health endpoints:
+Health:
 
 - `GET /healthz`
 - `GET /readyz`
 - `GET /.wellknown/secapi`
-- `GET /v1/regions`
-- `GET /v1/regions/{name}`
-- `GET /compute/v1/tenants/{tenant}/skus`
-- `GET /compute/v1/tenants/{tenant}/skus/{name}`
-- `GET /storage/v1/tenants/{tenant}/images`
-- `GET /storage/v1/tenants/{tenant}/images/{name}`
-- `GET /compute/v1/tenants/{tenant}/workspaces/{workspace}/instances`
-- `GET|PUT|DELETE /compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}`
-- `POST /compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/start`
-- `POST /compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/stop`
-- `POST /compute/v1/tenants/{tenant}/workspaces/{workspace}/instances/{name}/restart`
-- `GET /storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages`
-- `GET|PUT|DELETE /storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}`
-- `POST /storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/attach`
-- `POST /storage/v1/tenants/{tenant}/workspaces/{workspace}/block-storages/{name}/detach`
 
-## Workspace token setup
-
-1. Open your Hetzner Cloud project in the console.
-2. Go to `Security` -> `API Tokens`.
-3. Create a token for your dev project.
-4. Provide the token to a workspace via admin API (manually or with token-provisioner):
-
-```bash
-export SECA_ADMIN_TOKEN='dev-admin-token'
-# 32-byte key, base64 encoded (example below is for local dev only)
-export SECA_CREDENTIALS_KEY='MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY='
-```
-
-Optional endpoint overrides:
-
-```bash
-export HCLOUD_ENDPOINT='https://api.hetzner.cloud/v1'
-export HCLOUD_HETZNER_ENDPOINT='https://api.hetzner.com/v1'
-export SECA_HETZNER_AVAILABILITY_CACHE_TTL='60s'
-export SECA_INTERNET_GATEWAY_NAT_VM='false'
-```
-
-`SECA_HETZNER_AVAILABILITY_CACHE_TTL` controls how long server-type availability
-is cached before refetching from Hetzner. Set `0s` to disable caching.
-
-`SECA_INTERNET_GATEWAY_NAT_VM` enables an opt-in implementation for
-`network/v1` internet gateways:
-- creates one managed instance per internet gateway when route tables reference it
-- applies cloud-init to enable IPv4 forwarding and SNAT rules
-- syncs private network attachments based on referenced route-table networks
-- removes the managed instance when no route tables reference the internet gateway
-
-Operational caveats:
-- disabled by default (recommended unless you explicitly want this behavior)
-- this is a pragmatic polyfill for Hetzner (which has no native internet-gateway resource)
-- NAT data path correctness still depends on full route semantics and workload-level wiring
-
-`SECA_ADMIN_TOKEN` protects `/admin/v1/...` endpoints via Bearer auth.  
-`SECA_CREDENTIALS_KEY` is required and encrypts persisted workspace provider tokens at rest.
-`SECA_ADMIN_LISTEN_ADDR` binds admin API to a dedicated listener separate from public API.
-
-## Persistence stack
-
-- Embedded/local target: `pglite` (Postgres-compatible)
-- Schema migrations: `golang-migrate`
-- Query code generation: `sqlc`
-
-Commands:
-
-```bash
-make migrate-up
-make migrate-down
-make sqlc-gen
-```
-
-## CI/CD mapping to Make targets
-
-- Verify: `make ci-verify`
-- Unit: `make ci-unit`
-- Integration: `make ci-integration`
-- Contract: `make ci-contract`
-- Conformance smoke: `make conformance-smoke`
-- Conformance full: `make conformance-full`
-- Package: `make ci-package`
-
-## Docker
-
-```bash
-make docker-build
-make docker-run
-```
-
-## Docker Compose
-
-Start Postgres + migrations + API service:
+## Docker compose
 
 ```bash
 docker compose up --build
 ```
 
-Check service:
+Useful checks:
 
 ```bash
-curl -s http://localhost:8080/healthz
-curl -s http://localhost:8080/v1/regions
-curl -s http://localhost:8080/compute/v1/tenants/dev/skus
-curl -s http://localhost:8080/storage/v1/tenants/dev/images
+curl -s http://localhost:8080/healthz | jq
+curl -s http://localhost:8080/v1/regions | jq
+curl -s http://localhost:8080/compute/v1/tenants/dev/skus | jq
+curl -s http://localhost:8080/storage/v1/tenants/dev/images | jq
 ```
 
-Run full Phase 1 smoke test:
+## Credential model
 
-```bash
-make phase1-smoke
-```
+- No global Hetzner token is used for runtime resource operations.
+- Tokens are workspace-scoped and persisted via admin binding.
+- `SECA_ADMIN_TOKEN` secures `/admin/v1/...` endpoints.
+- `SECA_CREDENTIALS_KEY` is required for at-rest credential encryption.
 
-Run Phase 2 smoke checks:
+## Token provisioner (local/conformance)
 
-```bash
-make phase2-smoke
-```
-
-## Examples
-
-Internet gateway e2e flow (workspace -> network -> internet-gateway -> route-table):
-
-```bash
-./examples/internet-gateway-e2e.sh
-```
-
-## Minimal workspace token provisioner
-
-For conformance/local runs where workspaces start in `creating`, use:
+Use token-provisioner so newly created workspaces in `creating` become usable:
 
 ```bash
 export SECA_TOKEN_PROVISIONER_HETZNER_TOKEN='<token-from-hetzner-console>'
@@ -164,16 +66,70 @@ export SECA_TENANTS='dev'
 ```
 
 Optional:
-- `SECA_TOKEN_PROVISIONER_INTERVAL` (default: `1`)
+
+- `SECA_TOKEN_PROVISIONER_INTERVAL` (default `1`)
 - `HCLOUD_ENDPOINT`
 - `HCLOUD_PROJECT_REF`
 
+## Key runtime env vars
+
+- `SECA_ADMIN_TOKEN`
+- `SECA_CREDENTIALS_KEY`
+- `SECA_LISTEN_ADDR` (default `:8080`)
+- `SECA_ADMIN_LISTEN_ADDR` (default `127.0.0.1:8081`)
+- `SECA_PUBLIC_BASE_URL` (default `http://localhost:8080`)
+- `SECA_DATABASE_URL`
+- `SECA_CONFORMANCE_MODE` (bool)
+- `SECA_HETZNER_AVAILABILITY_CACHE_TTL` (default `60s`; set `0s` to disable cache)
+- `SECA_INTERNET_GATEWAY_NAT_VM` (default `false`)
+- `HCLOUD_ENDPOINT`
+- `HCLOUD_HETZNER_ENDPOINT`
+
+## Internet gateway (opt-in)
+
+Enable:
+
+```bash
+export SECA_INTERNET_GATEWAY_NAT_VM=true
+```
+
+Behavior when enabled:
+
+- creates one managed Hetzner VM per SECA internet-gateway
+- applies cloud-init to enable IPv4 forwarding + SNAT rules
+- syncs network attachments from route-table usage
+- programs Hetzner network routes (`destination -> IGW private IP`)
+- removes managed VM when no route-table references remain
+
+Notes:
+
+- this is a provider polyfill (Hetzner has no native internet-gateway resource)
+- for private-only workload instances, guest default route/DNS behavior may still require explicit handling depending on image/network stack
+
+## Examples
+
+### Internet gateway e2e
+
+```bash
+./examples/internet-gateway-e2e.sh
+```
+
+This script creates:
+
+1. workspace
+2. network
+3. internet-gateway
+4. route-table default route to internet-gateway
+
+Then prints resulting resources for inspection.
+
 ## Conformance
 
-The project is scored by the official conformance runner:
-`https://github.com/eu-sovereign-cloud/conformance`
+Official runner:
 
-Use the Make targets:
+- `https://github.com/eu-sovereign-cloud/conformance`
+
+Targets:
 
 ```bash
 make conformance-smoke
@@ -188,10 +144,7 @@ make conformance-foundation-core
 make conformance-full
 ```
 
-Default smoke uses `Region.V1.List` (compatible with current implementation scope).  
-`Foundation.V1.Usage` requires additional Workspace/Network/Storage/Compute conformance coverage and will fail until later phases.
-
-Defaults can be overridden through Make variables, for example:
+Example override:
 
 ```bash
 make conformance-smoke \
@@ -202,6 +155,17 @@ make conformance-smoke \
   CONFORMANCE_CLIENT_REGION='fsn1'
 ```
 
-Results are written to:
+Results path:
 
 - `.artifacts/conformance/results`
+
+## CI / Dev commands
+
+- `make ci-verify`
+- `make ci-unit`
+- `make ci-integration`
+- `make ci-contract`
+- `make ci-package`
+- `make migrate-up`
+- `make migrate-down`
+- `make sqlc-gen`
