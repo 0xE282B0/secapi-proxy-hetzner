@@ -1,8 +1,10 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,10 +34,12 @@ type internetGatewayStatusObject struct {
 }
 
 type internetGatewayBindingPayload struct {
-	Name   string               `json:"name"`
-	Region string               `json:"region"`
-	Labels map[string]string    `json:"labels,omitempty"`
-	Spec   internetGatewaySpec  `json:"spec"`
+	Name        string               `json:"name"`
+	Region      string               `json:"region"`
+	Labels      map[string]string    `json:"labels,omitempty"`
+	Spec        internetGatewaySpec  `json:"spec"`
+	Networks    []string             `json:"networks,omitempty"`
+	RouteTables []string             `json:"routeTables,omitempty"`
 }
 
 func listInternetGateways(store *state.Store) http.HandlerFunc {
@@ -110,6 +114,10 @@ func getInternetGateway(store *state.Store) http.HandlerFunc {
 			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "invalid internet gateway payload", r.URL.Path)
 			return
 		}
+		if networks, routeTables, usageErr := resolveInternetGatewayRouteUsage(r.Context(), store, tenant, workspace, name); usageErr == nil {
+			payload.Networks = networks
+			payload.RouteTables = routeTables
+		}
 		respondJSON(w, http.StatusOK, toInternetGatewayResourceFromBinding(*binding, payload, tenant, workspace, http.MethodGet, "active"))
 	}
 }
@@ -141,6 +149,13 @@ func putInternetGateway(store *state.Store) http.HandlerFunc {
 			Labels: req.Labels,
 			Spec:   req.Spec,
 		}
+		networks, routeTables, usageErr := resolveInternetGatewayRouteUsage(r.Context(), store, tenant, workspace, name)
+		if usageErr != nil {
+			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to resolve internet gateway route usage", r.URL.Path)
+			return
+		}
+		payload.Networks = networks
+		payload.RouteTables = routeTables
 		raw, err := json.Marshal(payload)
 		if err != nil {
 			respondProblem(w, http.StatusInternalServerError, "http://secapi.cloud/errors/internal", "Internal Server Error", "failed to encode internet gateway", r.URL.Path)
@@ -207,6 +222,46 @@ func parseInternetGatewayBinding(raw string) (internetGatewayBindingPayload, err
 	var payload internetGatewayBindingPayload
 	err := json.Unmarshal([]byte(raw), &payload)
 	return payload, err
+}
+
+func resolveInternetGatewayRouteUsage(ctx context.Context, store *state.Store, tenant, workspace, gatewayName string) ([]string, []string, error) {
+	bindings, err := store.ListResourceBindings(ctx, tenant, workspace, resourceBindingKindRouteTable)
+	if err != nil {
+		return nil, nil, err
+	}
+	gatewayName = strings.ToLower(strings.TrimSpace(gatewayName))
+	networkSet := map[string]struct{}{}
+	routeTableSet := map[string]struct{}{}
+	for _, binding := range bindings {
+		payload, parseErr := parseRouteTableBinding(binding.ProviderRef)
+		if parseErr != nil {
+			continue
+		}
+		for _, route := range payload.Spec.Routes {
+			if strings.ToLower(strings.TrimSpace(resourceNameFromRef(route.TargetRef.Resource))) != gatewayName {
+				continue
+			}
+			if n := strings.ToLower(strings.TrimSpace(payload.Network)); n != "" {
+				networkSet[n] = struct{}{}
+			}
+			if rt := strings.ToLower(strings.TrimSpace(payload.Name)); rt != "" {
+				routeTableSet[rt] = struct{}{}
+			}
+			break
+		}
+	}
+	networks := make([]string, 0, len(networkSet))
+	for network := range networkSet {
+		networks = append(networks, network)
+	}
+	sort.Strings(networks)
+
+	routeTables := make([]string, 0, len(routeTableSet))
+	for routeTable := range routeTableSet {
+		routeTables = append(routeTables, routeTable)
+	}
+	sort.Strings(routeTables)
+	return networks, routeTables, nil
 }
 
 func toInternetGatewayResourceFromBinding(
