@@ -227,7 +227,14 @@ func putSecurityGroup(provider NetworkProvider, store *state.Store) http.Handler
 
 		item, created, err := provider.CreateOrUpdateSecurityGroup(ctx, hetzner.SecurityGroupCreateRequest{
 			Name:   name,
-			Labels: req.Labels,
+			Labels: withSecaProviderLabels(
+				req.Labels,
+				tenant,
+				workspace,
+				"security-group",
+				name,
+				securityGroupRef(tenant, workspace, name),
+			),
 		})
 		if err != nil {
 			respondFromError(w, err, r.URL.Path)

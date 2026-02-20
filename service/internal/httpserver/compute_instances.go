@@ -38,6 +38,7 @@ type instanceStatus struct {
 }
 
 type instanceUpsertRequest struct {
+	Labels map[string]string `json:"labels,omitempty"`
 	Spec struct {
 		SkuRef         refObject  `json:"skuRef"`
 		ImageRef       *refObject `json:"imageRef,omitempty"`
@@ -187,6 +188,14 @@ func putInstance(provider ComputeStorageProvider, store *state.Store) http.Handl
 			ImageName: imageName,
 			Region:    regionFromZone(reqBody.Spec.Zone),
 			UserData:  reqBody.Spec.UserData,
+			Labels: withSecaProviderLabels(
+				reqBody.Labels,
+				tenant,
+				workspace,
+				"instance",
+				name,
+				computeInstanceRef(tenant, workspace, name),
+			),
 		})
 		if err != nil {
 			respondFromError(w, err, r.URL.Path)

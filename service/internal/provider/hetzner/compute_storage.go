@@ -27,6 +27,7 @@ type InstanceCreateRequest struct {
 	ImageName string
 	Region    string
 	UserData  string
+	Labels    map[string]string
 }
 
 type BlockStorage struct {
@@ -42,6 +43,7 @@ type BlockStorageCreateRequest struct {
 	SizeGB   int
 	Region   string
 	AttachTo string
+	Labels   map[string]string
 }
 
 func (s *RegionService) ListInstances(ctx context.Context) ([]Instance, error) {
@@ -122,6 +124,7 @@ func (s *RegionService) CreateOrUpdateInstance(ctx context.Context, req Instance
 		ServerType: serverType,
 		Image:      image,
 		UserData:   req.UserData,
+		Labels:     req.Labels,
 		PublicNet: &hcloud.ServerCreatePublicNet{
 			EnableIPv4: true,
 			EnableIPv6: true,
@@ -527,6 +530,7 @@ func (s *RegionService) CreateOrUpdateBlockStorage(ctx context.Context, req Bloc
 	createOpts := hcloud.VolumeCreateOpts{
 		Name: req.Name,
 		Size: req.SizeGB,
+		Labels: req.Labels,
 	}
 	if req.AttachTo != "" {
 		server, _, getErr := s.clientFor(ctx).Server.GetByName(ctx, req.AttachTo)

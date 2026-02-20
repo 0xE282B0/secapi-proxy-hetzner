@@ -32,6 +32,7 @@ type blockStorageStatus struct {
 }
 
 type blockStorageUpsertRequest struct {
+	Labels map[string]string `json:"labels,omitempty"`
 	Spec struct {
 		SizeGB         int        `json:"sizeGB"`
 		SkuRef         *refObject `json:"skuRef,omitempty"`
@@ -178,6 +179,14 @@ func putBlockStorage(provider ComputeStorageProvider, store *state.Store) http.H
 			SizeGB:   providerSizeGB,
 			Region:   reqBody.Metadata.Region,
 			AttachTo: attachTo,
+			Labels: withSecaProviderLabels(
+				reqBody.Labels,
+				tenant,
+				workspace,
+				"block-storage",
+				name,
+				blockStorageRef(tenant, workspace, name),
+			),
 		})
 		if err != nil {
 			respondFromError(w, err, r.URL.Path)

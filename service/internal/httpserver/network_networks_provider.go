@@ -139,7 +139,14 @@ func putNetworkProvider(provider NetworkProvider, store *state.Store) http.Handl
 		item, created, err := provider.CreateOrUpdateNetwork(ctx, hetzner.NetworkCreateRequest{
 			Name:   name,
 			CIDR:   strings.TrimSpace(*req.Spec.Cidr.IPv4),
-			Labels: req.Labels,
+			Labels: withSecaProviderLabels(
+				req.Labels,
+				tenant,
+				workspace,
+				"network",
+				name,
+				"seca.network/v1/tenants/"+tenant+"/workspaces/"+workspace+"/networks/"+name,
+			),
 		})
 		if err != nil {
 			respondFromError(w, err, r.URL.Path)
