@@ -36,6 +36,7 @@ func main() {
 	regionService := hetzner.NewRegionService(cfg)
 	servers := httpserver.New(cfg, store, regionService, regionService, regionService, regionService)
 	log.Printf("runtime mode: conformance=%t (SECA_CONFORMANCE_MODE)", cfg.ConformanceMode)
+	log.Printf("runtime mode: internet_gateway_nat_vm=%t (SECA_INTERNET_GATEWAY_NAT_VM)", cfg.InternetGatewayNATVM)
 
 	go func() {
 		log.Printf("starting secapi-proxy-hetzner public api on %s", cfg.ListenAddr)

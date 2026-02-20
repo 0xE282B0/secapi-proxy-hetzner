@@ -60,10 +60,23 @@ Optional endpoint overrides:
 export HCLOUD_ENDPOINT='https://api.hetzner.cloud/v1'
 export HCLOUD_HETZNER_ENDPOINT='https://api.hetzner.com/v1'
 export SECA_HETZNER_AVAILABILITY_CACHE_TTL='60s'
+export SECA_INTERNET_GATEWAY_NAT_VM='false'
 ```
 
 `SECA_HETZNER_AVAILABILITY_CACHE_TTL` controls how long server-type availability
 is cached before refetching from Hetzner. Set `0s` to disable caching.
+
+`SECA_INTERNET_GATEWAY_NAT_VM` enables an opt-in implementation for
+`network/v1` internet gateways:
+- creates one managed instance per internet gateway when route tables reference it
+- applies cloud-init to enable IPv4 forwarding and SNAT rules
+- syncs private network attachments based on referenced route-table networks
+- removes the managed instance when no route tables reference the internet gateway
+
+Operational caveats:
+- disabled by default (recommended unless you explicitly want this behavior)
+- this is a pragmatic polyfill for Hetzner (which has no native internet-gateway resource)
+- NAT data path correctness still depends on full route semantics and workload-level wiring
 
 `SECA_ADMIN_TOKEN` protects `/admin/v1/...` endpoints via Bearer auth.  
 `SECA_CREDENTIALS_KEY` is required and encrypts persisted workspace provider tokens at rest.
